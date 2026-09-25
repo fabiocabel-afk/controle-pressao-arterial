@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2E3272">
+<title>Pressão</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  --papel: #EEF1EC;
+  --tinta: #1F2A33;
+  --tinta-2: #55616B;
+  --linha: #D3D9D2;
+  --vidro: #C3CBBB;
+  --segmento: #23281F;
+  --fantasma: rgba(35, 40, 31, 0.07);
+  --start: #2E3272;
+  --start-2: #3E43A0;
+  --sys: #2E3272;
+  --dia: #4F8C79;
+  --alerta: #B3261E;
+  --ambar: #E4A11B;
+  --branco: #FFFFFF;
+  --raio: 14px;
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--papel); color: var(--tinta);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--ambar); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.tela { max-width: 560px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
+
+/* ---------- topo ---------- */
+.topo { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 6px; }
+.topo h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; font-weight: 700; }
+.icone { border: 0; background: transparent; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; }
+.icone:hover { background: rgba(31, 42, 51, 0.06); }
+.icone svg { width: 24px; height: 24px; }
+
+/* ---------- visor (elemento central da identidade) ---------- */
+.visor {
+  margin: 8px 18px 0; padding: 18px 20px 14px; border-radius: 22px;
+  background: linear-gradient(180deg, #F7F8F5 0%, #E6EAE3 100%);
+  border: 1px solid #D6DCD4;
+}
+.visor-vidro {
+  background: var(--vidro); border-radius: 12px; padding: 14px 16px 10px;
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.12);
+  display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: center;
+}
+.visor-rot { font-size: 0.8rem; color: #3D4A3F; line-height: 1.1; text-align: right; }
+.visor-rot b { display: block; font-size: 0.95rem; font-weight: 700; color: #2B342D; }
+.visor-num { justify-self: end; }
+.visor-num svg { display: block; }
+.visor-rodape { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; color: var(--tinta-2); font-size: 0.9rem; }
+.visor-vazio { padding: 18px 4px; color: #3D4A3F; grid-column: 1 / -1; text-align: center; }
+
+/* ---------- gráfico ---------- */
+.bloco { margin: 22px 18px 0; }
+.bloco h2 { font-size: 1.05rem; margin: 0 0 8px; font-weight: 650; }
+.grafico { background: var(--branco); border-radius: var(--raio); padding: 10px 8px 6px; border: 1px solid var(--linha); }
+.grafico svg { width: 100%; height: auto; display: block; }
+.legenda { display: flex; gap: 16px; font-size: 0.85rem; color: var(--tinta-2); padding: 4px 8px 2px; }
+.legenda i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+
+/* ---------- lista ---------- */
+.dia-titulo { font-size: 0.85rem; color: var(--tinta-2); margin: 18px 0 6px; font-weight: 600; }
+.lista { list-style: none; margin: 0; padding: 0; background: var(--branco); border-radius: var(--raio); border: 1px solid var(--linha); overflow: hidden; }
+.lista li + li { border-top: 1px solid var(--linha); }
+.item { width: 100%; border: 0; background: transparent; text-align: left; display: grid; grid-template-columns: 3.4em 1fr auto; align-items: baseline; gap: 10px; padding: 13px 14px; }
+.item:hover { background: #F6F8F5; }
+.item .hora { color: var(--tinta-2); font-variant-numeric: tabular-nums; }
+.item .pa { font-size: 1.2rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.item .pul { color: var(--tinta-2); font-variant-numeric: tabular-nums; }
+.marca { font-size: 0.75rem; color: var(--tinta-2); border: 1px solid var(--linha); border-radius: 99px; padding: 0 7px; margin-left: 6px; font-weight: 500; }
+
+.vazio { text-align: center; color: var(--tinta-2); padding: 28px 24px; }
+
+/* ---------- ações fixas ---------- */
+.acoes { position: sticky; bottom: 0; margin-top: auto; padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 10px;
+  background: linear-gradient(180deg, rgba(238,241,236,0) 0%, var(--papel) 30%); }
+.btn { border: 0; border-radius: 999px; padding: 14px 22px; font-weight: 650; font-size: 1.05rem; min-height: 52px; }
+.btn-start { background: var(--start); color: var(--branco); flex: 1; }
+.btn-start:hover { background: var(--start-2); }
+.btn-sec { background: var(--branco); color: var(--tinta); border: 1px solid var(--linha); }
+.btn-perigo { background: transparent; color: var(--alerta); border: 1px solid #E3C3BF; }
+.btn:disabled { opacity: 0.5; }
+
+/* ---------- câmera ---------- */
+#camera { position: fixed; inset: 0; background: #000; z-index: 20; }
+#camera video, #camera canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam-topo { position: absolute; top: env(safe-area-inset-top, 0px); left: 0; right: 0; display: flex; justify-content: space-between; padding: 10px; }
+.cam-topo .icone { background: rgba(0,0,0,0.45); color: #fff; }
+.cam-status { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  background: rgba(10, 12, 20, 0.72); color: #fff; padding: 10px 18px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+.cam-pontos { display: inline-flex; gap: 5px; margin-left: 10px; vertical-align: middle; }
+.cam-pontos span { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.3); }
+.cam-pontos span.on { background: var(--ambar); }
+.cam-base { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 18px calc(18px + env(safe-area-inset-bottom, 0px)); display: flex; justify-content: center; }
+.cam-base .btn-sec { background: rgba(255,255,255,0.92); }
+.guia { position: absolute; left: 50%; top: 45%; width: 56vmin; height: 70vmin; transform: translate(-50%, -50%); border: 2px dashed rgba(255,255,255,0.45); border-radius: 18px; pointer-events: none; }
+.cam-erro { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; color: #fff; text-align: center; }
+
+/* ---------- conferência / edição ---------- */
+.painel { padding: 6px 18px 0; }
+.conf-grade { display: grid; grid-template-columns: 116px 1fr; gap: 16px; align-items: start; }
+.recorte { width: 116px; border-radius: 10px; background: var(--vidro); display: block; }
+.campos { display: grid; gap: 12px; }
+.campo label { display: block; font-size: 0.9rem; color: var(--tinta-2); margin-bottom: 4px; font-weight: 600; }
+.campo .linha { display: flex; align-items: baseline; gap: 8px; }
+.campo input[type=number] { width: 100%; font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; padding: 6px 12px; border-radius: 12px; border: 1.5px solid var(--linha); background: var(--branco); }
+.campo input[type=datetime-local] { width: 100%; padding: 12px; border-radius: 12px; border: 1.5px solid var(--linha); background: var(--branco); }
+.campo .un { color: var(--tinta-2); font-size: 0.9rem; min-width: 3.4em; }
+.campo.erro input { border-color: var(--alerta); }
+.msg-erro { color: var(--alerta); font-size: 0.9rem; margin-top: 4px; }
+.aviso { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; background: #FFF6E0; border: 1px solid #F0D48E; font-size: 0.95rem; }
+.data-campo { margin-top: 16px; }
+
+/* ---------- folha de menu / diálogos ---------- */
+.fundo { position: fixed; inset: 0; background: rgba(15, 20, 25, 0.45); z-index: 30; display: flex; align-items: flex-end; justify-content: center; }
+.folha { background: var(--branco); width: 100%; max-width: 560px; border-radius: 22px 22px 0 0; padding: 10px 10px calc(14px + env(safe-area-inset-bottom, 0px)); }
+.folha button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 15px 14px; border-radius: 12px; font-size: 1.02rem; }
+.folha button:hover { background: #F2F4F1; }
+.folha .versao { color: var(--tinta-2); font-size: 0.8rem; padding: 8px 14px 0; }
+.dialogo { background: var(--branco); margin: auto 18px; max-width: 480px; border-radius: 18px; padding: 20px; align-self: center; }
+.dialogo h3 { margin: 0 0 8px; font-size: 1.15rem; }
+.dialogo pre { white-space: pre-wrap; background: #F6F6F4; padding: 10px; border-radius: 8px; font-size: 0.85rem; max-height: 30vh; overflow: auto; }
+.dialogo .botoes { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+
+.toast { pointer-events: none; position: fixed; left: 50%; bottom: calc(100px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--tinta); color: #fff; padding: 11px 18px; border-radius: 999px; z-index: 40; font-weight: 600; max-width: 90vw; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast { animation: sobe 180ms ease-out; }
+  @keyframes sobe { from { transform: translate(-50%, 8px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+}
+</style>
+</head>
+<body>
+
+<!-- ============ INÍCIO ============ -->
+<main id="inicio" class="tela">
+  <header class="topo">
+    <h1>Pressão</h1>
+    <button class="icone" id="btn-menu" aria-label="Mais opções">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+    </button>
+  </header>
+
+  <section class="visor" aria-label="Última leitura">
+    <div class="visor-vidro" id="ultimo"></div>
+    <div class="visor-rodape"><span id="ultimo-quando"></span><span id="ultimo-origem"></span></div>
+  </section>
+
+  <section class="bloco" id="bloco-grafico" hidden>
+    <h2>Últimas leituras</h2>
+    <div class="grafico">
+      <div id="grafico"></div>
+      <div class="legenda"><span><i style="background:var(--sys)"></i>Sistólica</span><span><i style="background:var(--dia)"></i>Diastólica</span></div>
+    </div>
+  </section>
+
+  <section class="bloco" id="bloco-lista">
+    <h2>Histórico</h2>
+    <div id="lista"></div>
+  </section>
+
+  <div class="acoes">
+    <button class="btn btn-sec" id="btn-digitar">Digitar</button>
+    <button class="btn btn-start" id="btn-medir">Ler o aparelho</button>
+  </div>
+</main>
+
+<!-- ============ CÂMERA ============ -->
+<section id="camera" hidden aria-label="Leitura pela câmera">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div class="guia" id="guia"></div>
+  <div class="cam-topo">
+    <button class="icone" id="btn-cam-fechar" aria-label="Fechar câmera">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <button class="icone" id="btn-lanterna" aria-label="Lanterna" hidden>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 2h10v4l-3 4v12h-4V10L7 6z"/></svg>
+    </button>
+  </div>
+  <div class="cam-status" id="cam-status" role="status" aria-live="polite">Abrindo a câmera…</div>
+  <div class="cam-base"><button class="btn btn-sec" id="btn-cam-digitar">Digitar os valores</button></div>
+  <div class="cam-erro" id="cam-erro" hidden></div>
+</section>
+
+<!-- ============ CONFERIR / EDITAR ============ -->
+<main id="conferir" class="tela" hidden>
+  <header class="topo">
+    <h1 id="conf-titulo">Confira a leitura</h1>
+    <button class="icone" id="btn-conf-fechar" aria-label="Voltar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+  <div class="painel">
+    <div class="conf-grade">
+      <canvas class="recorte" id="recorte" width="200" height="250" aria-label="Imagem do visor lida pela câmera"></canvas>
+      <div class="campos">
+        <div class="campo" id="c-sys"><label for="in-sys">Sistólica</label><div class="linha"><input id="in-sys" type="number" inputmode="numeric" min="50" max="280"><span class="un">mmHg</span></div><div class="msg-erro" hidden></div></div>
+        <div class="campo" id="c-dia"><label for="in-dia">Diastólica</label><div class="linha"><input id="in-dia" type="number" inputmode="numeric" min="30" max="200"><span class="un">mmHg</span></div><div class="msg-erro" hidden></div></div>
+        <div class="campo" id="c-pul"><label for="in-pul">Pulso</label><div class="linha"><input id="in-pul" type="number" inputmode="numeric" min="30" max="240"><span class="un">bpm</span></div><div class="msg-erro" hidden></div></div>
+      </div>
+    </div>
+    <p class="aviso" id="conf-aviso" hidden></p>
+    <div class="campo data-campo" id="c-data"><label for="in-data">Data e hora</label><input id="in-data" type="datetime-local"><div class="msg-erro" hidden></div></div>
+  </div>
+  <div class="acoes">
+    <button class="btn btn-sec" id="btn-reler">Ler novamente</button>
+    <button class="btn btn-perigo" id="btn-excluir" hidden>Excluir</button>
+    <button class="btn btn-start" id="btn-salvar">Salvar</button>
+  </div>
+</main>
+
+<div id="camada"></div>
+<input type="file" id="in-foto" accept="image/*" hidden>
+<input type="file" id="in-backup" accept="application/json,.json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
