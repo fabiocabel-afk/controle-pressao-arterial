@@ -307,10 +307,10 @@ button { cursor: pointer; }
 .fx-op b { display: block; font-size: 0.95rem; }
 .fx-op em { display: block; font-style: normal; font-weight: 700; color: #6E5A0E; margin: 2px 0; }
 .fx-op small { display: block; color: var(--tinta-2); font-size: 0.84rem; }
-.fx-pers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; opacity: 0.6; }
+.fx-pers { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 8px; opacity: 0.6; }
 .fx-pers.ativo { opacity: 1; }
 .fx-pers label { display: block; font-size: 0.82rem; color: var(--tinta-2); font-weight: 600; margin-bottom: 3px; }
-.fx-pers input { width: 100%; padding: 9px 10px; border-radius: 10px; border: 1.5px solid var(--linha); font: inherit; font-weight: 700; }
+.fx-pers .campo input[type=number] { box-sizing: border-box; width: 100%; min-width: 0; height: 46px; padding: 0 10px; border-radius: 10px; border: 1.5px solid var(--linha); background: var(--branco); font-size: 1.1rem; font-weight: 700; line-height: 1; }
 .pn-item .valores.fora { color: #C25E14; }
 .data-origem { margin: 5px 0 0; font-size: 0.85rem; color: var(--desce); }
 .data-origem.atencao { color: #8A5A12; }

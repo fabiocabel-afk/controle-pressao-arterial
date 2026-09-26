@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
