@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -188,9 +188,9 @@ function renderInicio() {
   const u = registros[0];
   if (u) {
     $('#ultimo').innerHTML = `
-      <div class="visor-rot"><b>SYS</b>mmHg</div><div class="visor-num">${lcdSVG(u.sys, 3, 58, `Sistólica ${u.sys}`)}</div>
-      <div class="visor-rot"><b>DIA</b>mmHg</div><div class="visor-num">${lcdSVG(u.dia, 3, 58, `Diastólica ${u.dia}`)}</div>
-      <div class="visor-rot"><b>Pulso</b>/min</div><div class="visor-num">${lcdSVG(u.pulse, 3, 32, `Pulso ${u.pulse}`)}</div>`;
+      <div class="visor-rot"><b>SYS</b>mmHg</div><div class="visor-num">${lcdSVG(u.sys, 3, 48, `Sistólica ${u.sys}`)}</div>
+      <div class="visor-rot"><b>DIA</b>mmHg</div><div class="visor-num">${lcdSVG(u.dia, 3, 48, `Diastólica ${u.dia}`)}</div>
+      <div class="visor-rot"><b>Pulso</b>/min</div><div class="visor-num">${lcdSVG(u.pulse, 3, 28, `Pulso ${u.pulse}`)}</div>`;
     $('#ultimo-quando').textContent = `${fmtDia(u.ts)}, ${fmtHora(u.ts)}`;
     $('#ultimo-origem').textContent = origemTxt(u);
   } else {
