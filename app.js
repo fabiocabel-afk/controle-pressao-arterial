@@ -1,7 +1,8 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.8.0';
 const DEVICE_ID = 'omron-hem7122';
+const APP_URL = 'https://fabiocabel-afk.github.io/controle-pressao-arterial/';
 
 // ====================== utilidades ======================
 const $ = (s) => document.querySelector(s);
@@ -923,11 +924,71 @@ async function apagarTudo() {
   }
 }
 
+// ====================== compartilhar o app ======================
+const TEXTO_CONVITE = 'Pressão: app gratuito para registrar a pressão arterial lendo o visor do medidor pela câmera. Abra no celular:';
+async function qrPNG() {
+  // desenha o QR Code (SVG) numa imagem PNG com margem branca e o endereço embaixo
+  const img = new Image(); img.src = 'qrcode.svg';
+  await img.decode();
+  const cv = document.createElement('canvas'); cv.width = 900; cv.height = 1000;
+  const c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
+  c.drawImage(img, 50, 40, 800, 800);
+  c.fillStyle = '#1F2A33'; c.textAlign = 'center';
+  c.font = '700 44px system-ui, sans-serif'; c.fillText('Pressão', 450, 900);
+  c.font = '26px system-ui, sans-serif'; c.fillStyle = '#55616B'; c.fillText(APP_URL.replace('https://', ''), 450, 950);
+  return new Promise((res) => cv.toBlob(res, 'image/png'));
+}
+async function copiarTexto(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (_) {
+    const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (_) {} ta.remove(); return ok;
+  }
+}
+function abrirCompartilhar() {
+  const texto = `${TEXTO_CONVITE} ${APP_URL}`, t = encodeURIComponent(texto), u = encodeURIComponent(APP_URL);
+  const f = document.createElement('div'); f.className = 'fundo';
+  const temNativo = !!navigator.share;
+  f.innerHTML = `<div class="dialogo compartilhar" role="dialog" aria-modal="true" aria-labelledby="cp-t">
+    <h3 id="cp-t">Compartilhar o app</h3>
+    <img class="cp-qr" src="qrcode.svg" alt="QR Code com o endereço do app" width="220" height="220">
+    <p class="cp-dica">Aponte a câmera do outro celular para este código.</p>
+    <div class="cp-link"><input id="cp-url" type="text" readonly value="${esc(APP_URL)}" aria-label="Endereço do app"><button class="btn btn-sec" data-c="copiar">Copiar</button></div>
+    <div class="cp-botoes">
+      ${temNativo ? '<button class="cp-op" data-c="nativo"><span class="cp-ic" style="background:#2E3272">⤴</span>Mais opções</button>' : ''}
+      <a class="cp-op" data-c="whatsapp" href="https://wa.me/?text=${t}" target="_blank" rel="noopener"><span class="cp-ic" style="background:#25D366">W</span>WhatsApp</a>
+      <a class="cp-op" data-c="telegram" href="https://t.me/share/url?url=${u}&text=${encodeURIComponent(TEXTO_CONVITE)}" target="_blank" rel="noopener"><span class="cp-ic" style="background:#229ED9">T</span>Telegram</a>
+      <a class="cp-op" data-c="email" href="mailto:?subject=${encodeURIComponent('App Pressão')}&body=${t}"><span class="cp-ic" style="background:#8A5A12">@</span>E-mail</a>
+      <a class="cp-op" data-c="sms" href="sms:?body=${t}"><span class="cp-ic" style="background:#23806B">✉</span>SMS</a>
+      <button class="cp-op" data-c="qr"><span class="cp-ic" style="background:#1F2A33">▦</span>Salvar QR Code</button>
+    </div>
+    <div class="botoes"><button class="btn btn-start" data-c="fechar">Fechar</button></div></div>`;
+  f.onclick = async (ev) => {
+    if (ev.target === f) { f.remove(); return; }
+    const b = ev.target.closest('[data-c]'); if (!b) return;
+    const c = b.dataset.c;
+    if (c === 'fechar') f.remove();
+    else if (c === 'copiar') { toast((await copiarTexto(APP_URL)) ? 'Link copiado' : 'Não foi possível copiar; selecione o endereço e copie'); f.querySelector('#cp-url').select(); }
+    else if (c === 'nativo') {
+      try {
+        const dados = { title: 'App Pressão', text: TEXTO_CONVITE, url: APP_URL };
+        const png = await qrPNG().catch(() => null);
+        if (png) { const arq = new File([png], 'qrcode-pressao.png', { type: 'image/png' }); if (navigator.canShare && navigator.canShare({ files: [arq] })) dados.files = [arq]; }
+        await navigator.share(dados);
+      } catch (e) { if (e && e.name !== 'AbortError') toast('Não foi possível abrir o compartilhamento'); }
+    } else if (c === 'qr') {
+      try { const png = await qrPNG(); baixar('qrcode-pressao.png', 'image/png', png); toast('QR Code salvo'); } catch (_) { toast('Não foi possível gerar a imagem'); }
+    }
+  };
+  $('#camada').appendChild(f);
+  f.querySelector('[data-c="fechar"]').focus();
+}
+
 // ====================== menu ======================
 function abrirMenu() {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
   const f = document.createElement('div'); f.className = 'fundo';
   f.innerHTML = `<div class="folha" role="menu">
+    <button data-a="compartilhar" role="menuitem">Compartilhar o app</button>
     <button data-a="json" role="menuitem">Exportar backup (JSON)</button>
     <button data-a="csv" role="menuitem">Exportar planilha (CSV)</button>
     <button data-a="imp" role="menuitem">Importar backup</button>
@@ -937,7 +998,8 @@ function abrirMenu() {
     const a = ev.target.dataset && ev.target.dataset.a;
     if (ev.target === f || a) f.remove();
     try {
-      if (a === 'json') await exportarJSON();
+      if (a === 'compartilhar') abrirCompartilhar();
+      else if (a === 'json') await exportarJSON();
       else if (a === 'csv') await exportarCSV();
       else if (a === 'imp') $('#in-backup').click();
       else if (a === 'reset') await apagarTudo();
