@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.6.4';
+const APP_VERSION = '1.7.0';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -100,6 +100,7 @@ const DB = (() => {
     juntarPerfis: (origem, destino) => tx(['perfis', 'leituras'], 'readwrite', (st, set) => {
       return req(st('leituras').getAll()).then((ls) => { let n = 0; for (const r of ls) if (r.profileId === origem) { r.profileId = destino; r.updatedAt = Date.now(); st('leituras').put(r); n++; } st('perfis').delete(origem); set(n); });
     }),
+    limparTudo: () => tx(['perfis', 'leituras'], 'readwrite', (st) => { st('perfis').clear(); st('leituras').clear(); }),
     importar: (perfis, leituras) => tx(['perfis', 'leituras'], 'readwrite', (st) => { for (const p of perfis) st('perfis').put(p); for (const r of leituras) st('leituras').put(r); }),
   };
 })();
@@ -140,6 +141,7 @@ const CORES_PERFIL = ['#2E3272', '#23806B', '#B0532A', '#7A3E9D', '#1F6FA8', '#A
 const perfilDe = (id) => perfis.find((p) => p.id === id) || null;
 const lerPerfilSalvo = () => { try { return localStorage.getItem('pressao.perfilAtual'); } catch (_) { return null; } };
 const salvarPerfilAtual = (id) => { try { localStorage.setItem('pressao.perfilAtual', id); } catch (_) {} };
+const esquecerPerfilAtual = () => { try { localStorage.removeItem('pressao.perfilAtual'); } catch (_) {} };
 async function carregar() {
   try { [perfis, todas] = await Promise.all([DB.perfis(), DB.all()]); }
   catch (e) {
@@ -577,7 +579,7 @@ const Perfil = (() => {
     f.alt().value = perfil && perfil.altura ? perfil.altura : '';
     marcarSexo(perfil ? perfil.sexo || '' : '');
     imc();
-    $('#btn-pf-excluir').hidden = !(modo === 'editar' && perfis.length > 1);
+    $('#btn-pf-excluir').hidden = modo !== 'editar';
     $('#btn-pf-juntar').hidden = !(modo === 'editar' && perfis.length > 1);
     mostrar('perfil', telaAtual === 'inicio');
     if (modo !== 'editar') setTimeout(() => f.nome().focus(), 50);
@@ -617,8 +619,8 @@ const Perfil = (() => {
     } finally { btn.disabled = false; }
   }
   async function excluir() {
-    const p = ctx.perfil, n = todas.filter((r) => r.profileId === p.id).length;
-    const ok1 = await dialog({ title: `Excluir ${p.nome}?`, text: `Isso apaga a pessoa e ${plural(n, 'leitura', 'leituras')} dela. Não pode ser desfeito. Se tiver dúvida, exporte um backup antes pelo menu ⋯.`, buttons: [{ label: 'Cancelar', value: false }, { label: 'Continuar', value: true, cls: 'btn-perigo' }] });
+    const p = ctx.perfil, n = todas.filter((r) => r.profileId === p.id).length, ultima = perfis.length === 1;
+    const ok1 = await dialog({ title: `Excluir ${p.nome}?`, text: `Isso apaga a pessoa e ${plural(n, 'leitura', 'leituras')} dela. Não pode ser desfeito. Se tiver dúvida, exporte um backup antes pelo menu ⋯.` + (ultima ? ' Como é a única pessoa cadastrada, o app volta para a tela de cadastro inicial.' : ''), buttons: [{ label: 'Cancelar', value: false }, { label: 'Continuar', value: true, cls: 'btn-perigo' }] });
     if (!ok1) return;
     const ok2 = await dialog({ title: 'Tem certeza?', text: `${p.nome} e ${plural(n, 'leitura', 'leituras')} serão apagadas agora.`, buttons: [{ label: 'Cancelar', value: false }, { label: `Excluir ${p.nome}`, value: true, cls: 'btn-perigo' }] });
     if (!ok2) return;
@@ -626,8 +628,10 @@ const Perfil = (() => {
       await DB.delPerfil(p.id);
       const [ps, ls] = await Promise.all([DB.perfis(), DB.all()]);
       if (ps.some((x) => x.id === p.id) || ls.some((r) => r.profileId === p.id)) throw new Error('Parte dos dados continua no armazenamento.');
-      if (perfilAtual === p.id) { perfilAtual = ps[0].id; salvarPerfilAtual(perfilAtual); }
-      toast(`Pessoa excluída: ${p.nome}`); voltarInicio(); await carregar();
+      if (perfilAtual === p.id) { perfilAtual = ps.length ? ps[0].id : null; if (perfilAtual) salvarPerfilAtual(perfilAtual); else esquecerPerfilAtual(); }
+      toast(`Pessoa excluída: ${p.nome}`);
+      if (ps.length) voltarInicio(); else { history.replaceState(null, ''); mostrar('inicio', false); }
+      await carregar();
     } catch (e) {
       await dialog({ title: 'Não foi possível excluir', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
     }
@@ -883,6 +887,42 @@ async function importar(file) {
   } finally { $('#in-backup').value = ''; }
 }
 
+// ====================== apagar tudo ======================
+async function apagarTudo() {
+  const [ps, ls] = await Promise.all([DB.perfis(), DB.all()]);
+  const f = document.createElement('div'); f.className = 'fundo';
+  f.innerHTML = `<div class="dialogo" role="alertdialog" aria-modal="true" aria-labelledby="rs-t">
+    <h3 id="rs-t">Apagar tudo e recomeçar?</h3>
+    <p>Isso apaga <b>${plural(ps.length, 'pessoa', 'pessoas')}</b> e <b>${plural(ls.length, 'leitura', 'leituras')}</b> deste aparelho, com notas e faixas. Não pode ser desfeito.</p>
+    <p>Se quiser guardar os dados, exporte um backup antes.</p>
+    <label for="rs-conf" class="rs-rot">Para confirmar, digite <b>APAGAR</b></label>
+    <input id="rs-conf" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <div class="botoes"><button class="btn btn-sec" data-r="cancelar">Cancelar</button><button class="btn btn-sec" data-r="backup">Exportar backup</button><button class="btn btn-perigo-cheio" data-r="apagar" disabled>Apagar tudo</button></div></div>`;
+  const inp = f.querySelector('#rs-conf'), bt = f.querySelector('[data-r="apagar"]');
+  inp.addEventListener('input', () => { bt.disabled = inp.value.trim().toUpperCase() !== 'APAGAR'; });
+  const escolha = await new Promise((resolve) => {
+    f.onclick = async (ev) => {
+      const b = ev.target.closest('[data-r]'); if (!b || b.disabled) return;
+      if (b.dataset.r === 'backup') { try { await exportarJSON(); } catch (e) { toast('Não foi possível exportar'); } return; }
+      f.remove(); resolve(b.dataset.r);
+    };
+    $('#camada').appendChild(f); inp.focus();
+  });
+  if (escolha !== 'apagar') return;
+  try {
+    await DB.limparTudo();
+    const [ps2, ls2] = await Promise.all([DB.perfis(), DB.all()]);
+    if (ps2.length || ls2.length) throw new Error('Parte dos dados continua no armazenamento.');
+    esquecerPerfilAtual(); perfilAtual = null; perfis = []; todas = []; registros = [];
+    history.replaceState(null, ''); mostrar('inicio', false);
+    toast('Tudo apagado. Pode começar de novo.');
+    await carregar();
+  } catch (e) {
+    await dialog({ title: 'Não foi possível apagar tudo', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
+    await carregar();
+  }
+}
+
 // ====================== menu ======================
 function abrirMenu() {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
@@ -891,6 +931,7 @@ function abrirMenu() {
     <button data-a="json" role="menuitem">Exportar backup (JSON)</button>
     <button data-a="csv" role="menuitem">Exportar planilha (CSV)</button>
     <button data-a="imp" role="menuitem">Importar backup</button>
+    <button data-a="reset" role="menuitem" class="perigo">Apagar tudo e recomeçar</button>
     <div class="versao">Versão ${APP_VERSION} · leitor para Omron HEM-7122</div></div>`;
   f.onclick = async (ev) => {
     const a = ev.target.dataset && ev.target.dataset.a;
@@ -899,6 +940,7 @@ function abrirMenu() {
       if (a === 'json') await exportarJSON();
       else if (a === 'csv') await exportarCSV();
       else if (a === 'imp') $('#in-backup').click();
+      else if (a === 'reset') await apagarTudo();
     } catch (e) { dialog({ title: 'Não foi possível exportar', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] }); }
   };
   $('#camada').appendChild(f);

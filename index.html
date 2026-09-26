@@ -245,6 +245,11 @@ button { cursor: pointer; }
 .folha .pessoa b { display: block; } .folha .pessoa small { color: var(--tinta-2); }
 .folha .pessoa .ok { width: 22px; height: 22px; color: var(--start); }
 .folha .pessoa.atual { background: #F0F1F8; }
+.folha button.perigo { color: var(--alerta); font-weight: 600; border-top: 1px solid var(--linha); border-radius: 0 0 12px 12px; margin-top: 4px; }
+.btn-perigo-cheio { background: var(--alerta); color: #fff; }
+.btn-perigo-cheio:disabled { opacity: 0.4; }
+.rs-rot { display: block; font-size: 0.9rem; margin: 6px 0 4px; }
+#rs-conf { width: 100%; padding: 11px; border-radius: 12px; border: 1.5px solid var(--linha); font: inherit; font-weight: 700; letter-spacing: 0.08em; }
 .folha button:disabled { color: var(--tinta-2); cursor: default; background: transparent; }
 .form-pessoa { display: grid; gap: 16px; padding-top: 8px; }
 .form-pessoa input { width: 100%; padding: 12px; border-radius: 12px; border: 1.5px solid var(--linha); background: var(--branco); font-size: 1.05rem; }
