@@ -294,6 +294,8 @@ button { cursor: pointer; }
 .fx-pers label { display: block; font-size: 0.82rem; color: var(--tinta-2); font-weight: 600; margin-bottom: 3px; }
 .fx-pers input { width: 100%; padding: 9px 10px; border-radius: 10px; border: 1.5px solid var(--linha); font: inherit; font-weight: 700; }
 .pn-item .valores.fora { color: #C25E14; }
+.data-origem { margin: 5px 0 0; font-size: 0.85rem; color: var(--desce); }
+.data-origem.atencao { color: #8A5A12; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -413,7 +415,7 @@ button { cursor: pointer; }
     </div>
     <p class="aviso" id="conf-aviso" hidden></p>
     <div class="alerta" id="conf-alerta" role="alert" hidden><b>Pressão muito alta.</b> Descanse 5 minutos sentado e meça de novo. Se continuar assim ou se houver dor no peito, falta de ar, fraqueza, dormência, dificuldade para falar ou alteração na visão, procure atendimento de urgência (SAMU 192).</div>
-    <div class="campo data-campo" id="c-data"><label for="in-data">Data e hora</label><input id="in-data" type="datetime-local"><div class="msg-erro" hidden></div></div>
+    <div class="campo data-campo" id="c-data"><label for="in-data">Data e hora</label><input id="in-data" type="datetime-local"><p class="data-origem" id="data-origem" hidden></p><div class="msg-erro" hidden></div></div>
     <div class="campo data-campo" id="c-pessoa"><label for="in-pessoa">Pessoa</label><select id="in-pessoa"></select></div>
     <details class="nota-sec" id="nota-sec">
       <summary>Nota <span class="opc">(opcional)</span> <span id="nota-resumo-cont"></span></summary>

@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -442,11 +442,15 @@ const Conferir = (() => {
     $('.conf-grade').style.gridTemplateColumns = $('#recorte').hidden ? '1fr' : '';
     mostrar('conferir', telaAtual === 'inicio');
   }
-  function nova({ values, confident, crop, source, falhou }) {
+  function nova({ values, confident, crop, source, falhou, ts, tsOrigem }) {
     ctx = { modo: 'nova', source, confident: !!confident, lidos: values ? { ...values } : null };
     $('#conf-titulo').textContent = source === 'manual' ? 'Nova leitura' : 'Confira a leitura';
     preencher(values);
-    $('#in-data').value = toLocalInput(Date.now());
+    $('#in-data').value = toLocalInput(ts || Date.now());
+    const dica = $('#data-origem');
+    dica.hidden = source !== 'foto';
+    dica.textContent = tsOrigem === 'exif' ? 'Data e hora em que a foto foi tirada.' : tsOrigem === 'arquivo' ? 'A foto não tinha a hora da captura; usei a data do arquivo. Confira.' : 'Não encontrei a data da foto; confira a data e a hora.';
+    dica.className = 'data-origem' + (tsOrigem === 'exif' ? '' : ' atencao');
     preencherPessoas(perfilAtual);
     carregarNota(null);
     desenharRecorte(crop);
@@ -468,6 +472,7 @@ const Conferir = (() => {
     $('#in-data').value = toLocalInput(reg.ts);
     preencherPessoas(reg.profileId);
     carregarNota(reg.nota);
+    $('#data-origem').hidden = true;
     desenharRecorte(null);
     $('#conf-aviso').hidden = true;
     $('#btn-reler').hidden = true;
@@ -650,6 +655,49 @@ const Perfil = (() => {
   return { primeiro: (orfas) => abrirForm('primeiro', null, orfas), abrirFolha, emOnboarding: () => ctx && ctx.modo === 'primeiro' && !perfis.length };
 })();
 
+// ---------- data e hora da foto (EXIF) ----------
+// Lê DateTimeOriginal (ou DateTimeDigitized / DateTime) do JPEG. Sem EXIF, usa a data do arquivo.
+async function dataDaFoto(file) {
+  try {
+    const buf = await file.slice(0, 256 * 1024).arrayBuffer();
+    const t = lerExif(new DataView(buf));
+    if (t && dataPlausivel(t)) return { ts: t, origem: 'exif' };
+  } catch (_) { /* segue para a data do arquivo */ }
+  if (file.lastModified && dataPlausivel(file.lastModified)) return { ts: file.lastModified, origem: 'arquivo' };
+  return { ts: Date.now(), origem: 'agora' };
+}
+const dataPlausivel = (t) => Number.isFinite(t) && t > Date.UTC(2000, 0, 1) && t < Date.now() + 5 * 60000;
+function lerExif(dv) {
+  if (dv.byteLength < 4 || dv.getUint16(0) !== 0xFFD8) return null;
+  let p = 2;
+  while (p + 4 <= dv.byteLength) {
+    if (dv.getUint8(p) !== 0xFF) return null;
+    const marca = dv.getUint8(p + 1), tam = dv.getUint16(p + 2);
+    if (marca === 0xE1 && p + 10 <= dv.byteLength && dv.getUint32(p + 4) === 0x45786966 && dv.getUint16(p + 8) === 0) return lerTiff(dv, p + 10, Math.min(dv.byteLength, p + 2 + tam));
+    if (marca === 0xDA) return null; // começou a imagem: sem EXIF
+    p += 2 + tam;
+  }
+  return null;
+}
+function lerTiff(dv, base, fim) {
+  const le = dv.getUint16(base) === 0x4949;
+  const u16 = (o) => dv.getUint16(base + o, le), u32 = (o) => dv.getUint32(base + o, le);
+  if (u16(2) !== 42) return null;
+  const txt = (e) => { const n = u32(e + 4), off = n > 4 ? u32(e + 8) : e + 8; let s = ''; for (let i = 0; i < n - 1 && base + off + i < fim; i++) s += String.fromCharCode(dv.getUint8(base + off + i)); return s; };
+  const ifd = (off) => { const out = {}; if (!off || base + off + 2 > fim) return out; const n = u16(off); for (let i = 0; i < n; i++) { const e = off + 2 + i * 12; if (base + e + 12 > fim) break; out[u16(e)] = e; } return out; };
+  const ifd0 = ifd(u32(4));
+  const exifIfd = ifd0[0x8769] ? ifd(u32(ifd0[0x8769] + 8)) : {};
+  const bruto = (exifIfd[0x9003] && txt(exifIfd[0x9003])) || (exifIfd[0x9004] && txt(exifIfd[0x9004])) || (ifd0[0x0132] && txt(ifd0[0x0132]));
+  const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(bruto || '');
+  if (!m) return null;
+  const fuso = exifIfd[0x9011] ? /^([+-])(\d{2}):(\d{2})$/.exec(txt(exifIfd[0x9011])) : null;
+  if (fuso) { // horário com fuso conhecido: momento exato
+    const min = (fuso[1] === '-' ? -1 : 1) * (+fuso[2] * 60 + +fuso[3]);
+    return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) - min * 60000;
+  }
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime(); // hora local do aparelho
+}
+
 // ====================== foto da galeria ======================
 async function lerFoto(file) {
   if (!file) return;
@@ -659,8 +707,8 @@ async function lerFoto(file) {
     const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
     const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * s); cv.height = Math.round(bmp.height * s);
     const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bmp, 0, 0, cv.width, cv.height);
-    const r = await Leitor.photo(cx.getImageData(0, 0, cv.width, cv.height));
-    Conferir.nova({ values: r.ok ? r.values : null, confident: r.confident, crop: r.ok ? r.crop : null, source: 'foto', falhou: !r.ok });
+    const [r, quando] = await Promise.all([Leitor.photo(cx.getImageData(0, 0, cv.width, cv.height)), dataDaFoto(file)]);
+    Conferir.nova({ values: r.ok ? r.values : null, confident: r.confident, crop: r.ok ? r.crop : null, source: 'foto', falhou: !r.ok, ts: quando.ts, tsOrigem: quando.origem });
   } catch (e) {
     await dialog({ title: 'Não foi possível abrir a foto', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
   } finally { $('#in-foto').value = ''; }
