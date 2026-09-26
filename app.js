@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.5.0';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -47,29 +47,32 @@ function dialog({ title, text, detail, buttons }) {
 }
 
 // ====================== banco de dados (IndexedDB) ======================
+// v1: leituras. v2: + perfis (cada leitura ganha profileId).
 const DB = (() => {
   let dbp = null;
   function open() {
     if (dbp) return dbp;
     dbp = new Promise((res, rej) => {
-      const rq = indexedDB.open('pressao', 1);
+      const rq = indexedDB.open('pressao', 2);
       rq.onupgradeneeded = () => {
         const db = rq.result;
         if (!db.objectStoreNames.contains('leituras')) {
           const st = db.createObjectStore('leituras', { keyPath: 'id' });
           st.createIndex('ts', 'ts');
         }
+        if (!db.objectStoreNames.contains('perfis')) db.createObjectStore('perfis', { keyPath: 'id' });
       };
-      rq.onsuccess = () => res(rq.result);
+      rq.onsuccess = () => { const db = rq.result; db.onversionchange = () => { db.close(); dbp = null; }; res(db); };
       rq.onerror = () => { dbp = null; rej(rq.error || new Error('Falha ao abrir o banco de dados')); };
-      rq.onblocked = () => rej(new Error('Banco de dados bloqueado por outra aba aberta do app'));
+      rq.onblocked = () => rej(new Error('Banco de dados bloqueado por outra aba aberta do app. Feche as outras abas e tente de novo.'));
     });
     return dbp;
   }
-  function tx(mode, fn) {
+  function tx(stores, mode, fn) {
     return open().then((db) => new Promise((res, rej) => {
-      const t = db.transaction('leituras', mode); const st = t.objectStore('leituras'); let out;
-      Promise.resolve(fn(st, (v) => { out = v; })).catch(rej);
+      const t = db.transaction(stores, mode); let out;
+      const st = (n) => t.objectStore(n);
+      Promise.resolve(fn(st, (v) => { out = v; })).catch((e) => { try { t.abort(); } catch (_) {} rej(e); });
       t.oncomplete = () => res(out);
       t.onerror = () => rej(t.error || new Error('Erro na transação'));
       t.onabort = () => rej(t.error || new Error('Transação cancelada'));
@@ -77,11 +80,23 @@ const DB = (() => {
   }
   const req = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   return {
-    all: () => tx('readonly', (st, set) => req(st.getAll()).then((v) => set(v.sort((a, b) => b.ts - a.ts)))),
-    get: (id) => tx('readonly', (st, set) => req(st.get(id)).then(set)),
-    put: (rec) => tx('readwrite', (st) => { st.put(rec); }),
-    del: (id) => tx('readwrite', (st) => { st.delete(id); }),
-    putMany: (recs) => tx('readwrite', (st) => { for (const r of recs) st.put(r); }),
+    all: () => tx(['leituras'], 'readonly', (st, set) => req(st('leituras').getAll()).then((v) => set(v.sort((a, b) => b.ts - a.ts)))),
+    get: (id) => tx(['leituras'], 'readonly', (st, set) => req(st('leituras').get(id)).then(set)),
+    put: (rec) => tx(['leituras'], 'readwrite', (st) => { st('leituras').put(rec); }),
+    del: (id) => tx(['leituras'], 'readwrite', (st) => { st('leituras').delete(id); }),
+    perfis: () => tx(['perfis'], 'readonly', (st, set) => req(st('perfis').getAll()).then((v) => set(v.sort((a, b) => a.createdAt - b.createdAt)))),
+    putPerfil: (p) => tx(['perfis'], 'readwrite', (st) => { st('perfis').put(p); }),
+    // primeiro perfil: grava e associa a ele as leituras antigas sem dono (tudo numa transação)
+    primeiroPerfil: (p) => tx(['perfis', 'leituras'], 'readwrite', (st, set) => {
+      st('perfis').put(p);
+      return req(st('leituras').getAll()).then((ls) => { let n = 0; for (const r of ls) if (!r.profileId) { r.profileId = p.id; st('leituras').put(r); n++; } set(n); });
+    }),
+    // exclui a pessoa e todas as leituras dela (tudo ou nada)
+    delPerfil: (id) => tx(['perfis', 'leituras'], 'readwrite', (st, set) => {
+      st('perfis').delete(id);
+      return req(st('leituras').getAll()).then((ls) => { let n = 0; for (const r of ls) if (r.profileId === id) { st('leituras').delete(r.id); n++; } set(n); });
+    }),
+    importar: (perfis, leituras) => tx(['perfis', 'leituras'], 'readwrite', (st) => { for (const p of perfis) st('perfis').put(p); for (const r of leituras) st('leituras').put(r); }),
   };
 })();
 
@@ -112,15 +127,62 @@ function lcdSVG(value, nDigits, H, label) {
 }
 
 // ====================== tela inicial ======================
-let registros = [];
+let registros = [];      // leituras da pessoa atual (mais recente primeiro)
+let todas = [];          // leituras de todas as pessoas
+let perfis = [];
+let perfilAtual = null;  // id
+const MAX_PERFIS = 12;
+const CORES_PERFIL = ['#2E3272', '#23806B', '#B0532A', '#7A3E9D', '#1F6FA8', '#A0356A', '#5B6B1F', '#8A5A12', '#2F7C8C', '#6A4A3A', '#3D55B8', '#9C2F2F'];
+const perfilDe = (id) => perfis.find((p) => p.id === id) || null;
+const lerPerfilSalvo = () => { try { return localStorage.getItem('pressao.perfilAtual'); } catch (_) { return null; } };
+const salvarPerfilAtual = (id) => { try { localStorage.setItem('pressao.perfilAtual', id); } catch (_) {} };
 async function carregar() {
-  try { registros = await DB.all(); }
+  try { [perfis, todas] = await Promise.all([DB.perfis(), DB.all()]); }
   catch (e) {
-    registros = [];
+    perfis = []; todas = []; registros = [];
     await dialog({ title: 'Não foi possível abrir suas leituras', text: 'O navegador recusou o acesso ao armazenamento do app. Seus dados não foram alterados. Feche outras abas deste app e tente de novo.', detail: String(e && e.message || e), buttons: [{ label: 'Entendi', value: 1, cls: 'btn-start' }] });
+    return;
   }
+  if (!perfis.length) { Perfil.primeiro(todas.filter((r) => !r.profileId).length); return; }
+  if (!perfilDe(perfilAtual)) perfilAtual = perfilDe(lerPerfilSalvo()) ? lerPerfilSalvo() : perfis[0].id;
+  registros = todas.filter((r) => r.profileId === perfilAtual);
+  renderTopo();
   renderInicio();
+  if (telaAtual === 'painel') Painel.render();
 }
+function avatarHTML(p, tam) {
+  const ini = (p.nome.trim()[0] || '?').toUpperCase();
+  return `<span class="avatar" style="background:${CORES_PERFIL[(p.cor || 0) % CORES_PERFIL.length]};${tam ? `width:${tam}px;height:${tam}px;font-size:${Math.round(tam * 0.45)}px` : ''}" aria-hidden="true">${esc(ini)}</span>`;
+}
+function renderTopo() {
+  const p = perfilDe(perfilAtual); if (!p) return;
+  $('#perfil-avatar').innerHTML = avatarHTML(p);
+  $('#perfil-nome').textContent = p.nome;
+  $('#btn-perfil').setAttribute('aria-label', `Pessoa: ${p.nome}. Trocar ou adicionar pessoa`);
+  const pn = $('#painel-pessoa'); if (pn) pn.textContent = p.nome;
+}
+// ---------- notas ----------
+const CATEGORIAS = [
+  { k: 'sintomas', nome: 'Sintomas', op: ['Dor de cabeça', 'Tontura', 'Visão turva', 'Falta de ar', 'Dor no peito', 'Palpitação', 'Cansaço', 'Nenhum'] },
+  { k: 'alimentacao', nome: 'Alimentação', op: ['Refeição há menos de 1 h', 'Comida salgada', 'Refeição pesada', 'Em jejum'] },
+  { k: 'atividade', nome: 'Atividade física', op: ['Exercício há menos de 30 min', 'Caminhada', 'Esforço físico', 'Em repouso'] },
+  { k: 'emocional', nome: 'Emocional', op: ['Calmo', 'Ansioso', 'Estressado', 'Irritado', 'Triste', 'Com dor'] },
+  { k: 'sono', nome: 'Qualidade do sono', op: ['Boa', 'Regular', 'Ruim', 'Dormi pouco', 'Acordei várias vezes'] },
+  { k: 'medicamentos', nome: 'Medicamentos', op: ['Tomei no horário', 'Tomei atrasado', 'Esqueci de tomar', 'Medi antes do remédio', 'Remédio novo ou dose mudou'] },
+  { k: 'substancias', nome: 'Cafeína, álcool ou cigarro', op: ['Café', 'Chá ou refrigerante com cafeína', 'Energético', 'Bebida alcoólica', 'Cigarro'] },
+  { k: 'medicao', nome: 'Como foi a medição', op: ['Braço esquerdo', 'Braço direito', 'Sentado', 'Deitado', 'Em pé', 'Repousei 5 min antes', 'Não repousei antes', 'Bexiga cheia', 'Falei durante a medição', 'Braçadeira sobre a roupa'] },
+];
+const catDe = (k) => CATEGORIAS.find((c) => c.k === k);
+function notaPreenchida(n) { return !!(n && ((n.cats && Object.keys(n.cats).length) || (n.livre && n.livre.trim()))); }
+function temNota(r) { return notaPreenchida(r && r.nota); }
+function notaLinhas(n) {
+  if (!n) return [];
+  const out = [];
+  for (const c of CATEGORIAS) { const v = n.cats && n.cats[c.k]; if (!v) continue; const partes = [...(v.op || [])]; if (v.txt && v.txt.trim()) partes.push(v.txt.trim()); out.push({ nome: c.nome, texto: partes.join(', ') || '(marcado)' }); }
+  if (n.livre && n.livre.trim()) out.push({ nome: 'Nota', texto: n.livre.trim() });
+  return out;
+}
+const ICONE_NOTA = '<svg class="ic-nota" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="tem nota"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>';
 function origemTxt(r) { return r.source === 'manual' ? 'Digitada' : r.source === 'foto' ? 'Lida de uma foto' : 'Lida pela câmera'; }
 function renderInicio() {
   const u = registros[0];
@@ -132,7 +194,7 @@ function renderInicio() {
     $('#ultimo-quando').textContent = `${fmtDia(u.ts)}, ${fmtHora(u.ts)}`;
     $('#ultimo-origem').textContent = origemTxt(u);
   } else {
-    $('#ultimo').innerHTML = `<div class="visor-vazio">Nenhuma leitura ainda.<br>Toque em <b>Ler o aparelho</b> e aponte a câmera para o visor.</div>`;
+    $('#ultimo').innerHTML = `<div class="visor-vazio">Nenhuma leitura de ${esc((perfilDe(perfilAtual) || { nome: '' }).nome)} ainda.<br>Toque em <b>+</b> para adicionar a primeira.</div>`;
     $('#ultimo-quando').textContent = ''; $('#ultimo-origem').textContent = '';
   }
   // gráfico simples das últimas 20 leituras
@@ -146,7 +208,7 @@ function renderInicio() {
     const dia = fmtDia(r.ts);
     if (dia !== diaAtual) { if (diaAtual) html += '</ul>'; html += `<div class="dia-titulo">${esc(dia)}</div><ul class="lista">`; diaAtual = dia; }
     const marcas = (r.source === 'manual' ? '<span class="marca">digitada</span>' : '') + (r.edited ? '<span class="marca">corrigida</span>' : '');
-    html += `<li><button class="item" data-id="${esc(r.id)}"><span class="hora">${fmtHora(r.ts)}</span><span class="pa">${r.sys}/${r.dia}${marcas}</span><span class="pul">${r.pulse} bpm</span></button></li>`;
+    html += `<li><button class="item" data-id="${esc(r.id)}"><span class="hora">${fmtHora(r.ts)}</span><span class="pa">${r.sys}/${r.dia}${marcas}${temNota(r) ? ICONE_NOTA : ''}</span><span class="pul">${r.pulse} bpm</span></button></li>`;
   }
   html += '</ul>';
   $('#lista').innerHTML = html;
@@ -168,7 +230,7 @@ function graficoSVG(s) {
 // ====================== navegação ======================
 let telaAtual = 'inicio';
 function mostrar(nome, push = true) {
-  for (const id of ['inicio', 'camera', 'conferir', 'painel']) $('#' + id).hidden = id !== nome && !(id === 'inicio' && nome === 'camera');
+  for (const id of ['inicio', 'camera', 'conferir', 'painel', 'perfil']) $('#' + id).hidden = id !== nome && !(id === 'inicio' && nome === 'camera');
   if (nome !== 'camera') Camera.parar();
   if (push && nome !== 'inicio' && telaAtual === 'inicio') history.pushState({ tela: nome }, '');
   telaAtual = nome;
@@ -176,6 +238,7 @@ function mostrar(nome, push = true) {
 }
 function voltarInicio() { if (history.state && history.state.tela) history.back(); else mostrar('inicio', false); }
 window.addEventListener('popstate', () => {
+  if (!perfis.length) { history.pushState({ tela: 'perfil' }, ''); return; } // cadastro inicial é obrigatório
   if (telaAtual === 'inicio') return;
   // da conferência aberta a partir do painel, volta ao painel
   Camera.parar(); mostrar('inicio', false); carregar();
@@ -299,6 +362,7 @@ const Camera = (() => {
 // ====================== conferir / editar ======================
 const Conferir = (() => {
   let ctx = null; // { modo, source, confident, lidos, registro }
+  let nota = { cats: {}, livre: '' };
   const campos = { sys: $('#in-sys'), dia: $('#in-dia'), pulse: $('#in-pul') };
   function preencher(v) { campos.sys.value = v && v.sys != null && !Number.isNaN(v.sys) ? v.sys : ''; campos.dia.value = v && v.dia != null && !Number.isNaN(v.dia) ? v.dia : ''; campos.pulse.value = v && v.pulse != null && !Number.isNaN(v.pulse) ? v.pulse : ''; }
   function limparErros() { for (const id of ['c-sys', 'c-dia', 'c-pul', 'c-data']) { $('#' + id).classList.remove('erro'); $('#' + id + ' .msg-erro').hidden = true; } }
@@ -309,8 +373,54 @@ const Conferir = (() => {
     cv.hidden = false; cv.width = crop.w; cv.height = crop.h;
     cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(crop.data), crop.w, crop.h), 0, 0);
   }
+  // ---------- pessoa ----------
+  function preencherPessoas(id) {
+    $('#in-pessoa').innerHTML = perfis.map((p) => `<option value="${esc(p.id)}"${p.id === id ? ' selected' : ''}>${esc(p.nome)}</option>`).join('');
+    $('#c-pessoa').hidden = perfis.length < 2;
+  }
+  // ---------- notas ----------
+  function renderNota() {
+    $('#nota-cats').innerHTML = CATEGORIAS.map((c) => `<button type="button" class="chip-cat" data-cat="${c.k}" aria-pressed="${!!nota.cats[c.k]}">${esc(c.nome)}</button>`).join('');
+    $('#nota-paineis').innerHTML = CATEGORIAS.filter((c) => nota.cats[c.k]).map((c) => {
+      const v = nota.cats[c.k];
+      return `<div class="nota-painel" data-painel="${c.k}"><div class="nota-painel-t">${esc(c.nome)}<button type="button" class="nota-tirar" data-tirar="${c.k}" aria-label="Remover ${esc(c.nome)}">×</button></div>
+        <div class="nota-ops">${c.op.map((o) => `<button type="button" class="chip-op" data-cat="${c.k}" data-op="${esc(o)}" aria-pressed="${v.op.includes(o)}">${esc(o)}</button>`).join('')}</div>
+        <input type="text" class="nota-txt" data-cat="${c.k}" maxlength="200" placeholder="Detalhes (opcional)" value="${esc(v.txt || '')}"></div>`;
+    }).join('');
+    $('#nota-livre').value = nota.livre || '';
+    const n = notaLinhas(nota).length;
+    $('#nota-resumo-cont').textContent = n ? `(${n})` : '';
+  }
+  function carregarNota(n) {
+    nota = { cats: {}, livre: (n && n.livre) || '' };
+    if (n && n.cats) for (const k of Object.keys(n.cats)) if (catDe(k)) nota.cats[k] = { op: [...(n.cats[k].op || [])], txt: n.cats[k].txt || '' };
+    renderNota();
+    $('#nota-sec').open = notaPreenchida(nota);
+  }
+  function notaFinal() {
+    const out = { cats: {}, livre: ($('#nota-livre').value || '').trim().slice(0, 1000) };
+    for (const k of Object.keys(nota.cats)) out.cats[k] = { op: nota.cats[k].op.slice(), txt: (nota.cats[k].txt || '').trim() };
+    return notaPreenchida(out) ? out : null;
+  }
+  $('#nota-sec').addEventListener('click', (ev) => {
+    const cat = ev.target.closest('.chip-cat'), op = ev.target.closest('.chip-op'), tirar = ev.target.closest('[data-tirar]');
+    if (cat) { const k = cat.dataset.cat; if (nota.cats[k]) delete nota.cats[k]; else nota.cats[k] = { op: [], txt: '' }; renderNota(); const inp = document.querySelector(`.nota-painel[data-painel="${k}"] .chip-op`); if (inp && nota.cats[k]) inp.focus(); }
+    else if (op) { const v = nota.cats[op.dataset.cat]; const o = op.dataset.op; v.op = v.op.includes(o) ? v.op.filter((x) => x !== o) : v.op.concat(o); op.setAttribute('aria-pressed', String(v.op.includes(o))); }
+    else if (tirar) { delete nota.cats[tirar.dataset.tirar]; renderNota(); }
+  });
+  $('#nota-sec').addEventListener('input', (ev) => {
+    if (ev.target.classList.contains('nota-txt')) nota.cats[ev.target.dataset.cat].txt = ev.target.value;
+    if (ev.target.id === 'nota-livre') nota.livre = ev.target.value;
+  });
+  // ---------- alerta de valores muito altos ----------
+  function checarAlerta() {
+    const s = Number(campos.sys.value), d = Number(campos.dia.value);
+    $('#conf-alerta').hidden = !((s >= 180) || (d >= 120));
+  }
+  for (const k of ['sys', 'dia']) campos[k].addEventListener('input', checarAlerta);
+
   function abrirTela() {
-    limparErros();
+    limparErros(); checarAlerta();
     $('.conf-grade').style.gridTemplateColumns = $('#recorte').hidden ? '1fr' : '';
     mostrar('conferir', telaAtual === 'inicio');
   }
@@ -319,6 +429,8 @@ const Conferir = (() => {
     $('#conf-titulo').textContent = source === 'manual' ? 'Nova leitura' : 'Confira a leitura';
     preencher(values);
     $('#in-data').value = toLocalInput(Date.now());
+    preencherPessoas(perfilAtual);
+    carregarNota(null);
     desenharRecorte(crop);
     const av = $('#conf-aviso');
     if (falhou) { av.hidden = false; av.textContent = 'Não consegui ler o visor nesta imagem. Digite os valores ou tente outra foto, de frente e sem reflexo.'; }
@@ -336,6 +448,8 @@ const Conferir = (() => {
     $('#conf-titulo').textContent = 'Editar leitura';
     preencher(reg);
     $('#in-data').value = toLocalInput(reg.ts);
+    preencherPessoas(reg.profileId);
+    carregarNota(reg.nota);
     desenharRecorte(null);
     $('#conf-aviso').hidden = true;
     $('#btn-reler').hidden = true;
@@ -357,29 +471,33 @@ const Conferir = (() => {
     const ts = fromLocalInput($('#in-data').value);
     if (Number.isNaN(ts)) { marcarErro('c-data', 'Informe a data e a hora.'); ok = false; }
     else if (ts > Date.now() + 5 * 60000) { marcarErro('c-data', 'A data está no futuro.'); ok = false; }
-    return ok ? { ...v, ts } : null;
+    const pid = $('#in-pessoa').value || perfilAtual;
+    if (!perfilDe(pid)) { ok = false; toast('Escolha a pessoa desta leitura'); }
+    return ok ? { ...v, ts, profileId: pid } : null;
   }
   async function salvar() {
     const v = validar(); if (!v) return;
-    const agora = Date.now();
+    const agora = Date.now(), nf = notaFinal();
     let rec;
     if (ctx.modo === 'nova') {
       const lidos = ctx.lidos;
-      rec = { id: uuid(), ts: v.ts, sys: v.sys, dia: v.dia, pulse: v.pulse, source: ctx.source, device: ctx.source === 'manual' ? null : DEVICE_ID,
-        confident: ctx.source === 'manual' ? null : ctx.confident, read: lidos || null,
+      rec = { id: uuid(), profileId: v.profileId, ts: v.ts, sys: v.sys, dia: v.dia, pulse: v.pulse, source: ctx.source, device: ctx.source === 'manual' ? null : DEVICE_ID,
+        confident: ctx.source === 'manual' ? null : ctx.confident, read: lidos || null, nota: nf,
         edited: !!(lidos && (lidos.sys !== v.sys || lidos.dia !== v.dia || lidos.pulse !== v.pulse)), createdAt: agora, updatedAt: agora };
     } else {
       const r0 = ctx.registro;
-      rec = { ...r0, ts: v.ts, sys: v.sys, dia: v.dia, pulse: v.pulse, updatedAt: agora };
+      rec = { ...r0, profileId: v.profileId, ts: v.ts, sys: v.sys, dia: v.dia, pulse: v.pulse, nota: nf, updatedAt: agora };
       if (r0.read) rec.edited = r0.read.sys !== v.sys || r0.read.dia !== v.dia || r0.read.pulse !== v.pulse;
     }
     const btn = $('#btn-salvar'); btn.disabled = true;
     try {
       await DB.put(rec);
       const conf = await DB.get(rec.id); // confirma que foi gravado de verdade
-      if (!conf || conf.sys !== rec.sys || conf.dia !== rec.dia || conf.pulse !== rec.pulse || conf.ts !== rec.ts) throw new Error('A leitura não foi encontrada no armazenamento depois de salvar.');
+      if (!conf || conf.sys !== rec.sys || conf.dia !== rec.dia || conf.pulse !== rec.pulse || conf.ts !== rec.ts || conf.profileId !== rec.profileId || JSON.stringify(conf.nota) !== JSON.stringify(rec.nota))
+        throw new Error('A leitura não foi encontrada no armazenamento depois de salvar.');
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-      toast(ctx.modo === 'nova' ? 'Leitura salva' : 'Alterações salvas');
+      const outra = rec.profileId !== perfilAtual ? ` para ${perfilDe(rec.profileId).nome}` : '';
+      toast((ctx.modo === 'nova' ? 'Leitura salva' : 'Alterações salvas') + outra);
       voltarInicio(); await carregar();
     } catch (e) {
       await dialog({ title: 'A leitura NÃO foi salva', text: 'Os valores continuam na tela. Tente salvar de novo; se o erro continuar, anote os números e exporte um backup pelo menu.', detail: String(e && e.message || e), buttons: [{ label: 'Voltar aos valores', value: 1, cls: 'btn-start' }] });
@@ -401,6 +519,117 @@ const Conferir = (() => {
     Leitor.reset(); Camera.abrir();
   }
   return { nova, editar, salvar, excluir, reler };
+})();
+
+// ====================== pessoas (perfis) ======================
+const Perfil = (() => {
+  let ctx = null; // { modo: 'primeiro'|'novo'|'editar', perfil, orfas }
+  let sexo = '';
+  const f = { nome: () => $('#pf-nome'), nasc: () => $('#pf-nasc'), peso: () => $('#pf-peso'), alt: () => $('#pf-alt') };
+  function limparErros() { document.querySelectorAll('#perfil .campo').forEach((c) => { c.classList.remove('erro'); const m = c.querySelector('.msg-erro'); if (m) m.hidden = true; }); }
+  function erro(id, msg) { const c = $('#' + id); c.classList.add('erro'); const m = c.querySelector('.msg-erro'); m.textContent = msg; m.hidden = false; }
+  function marcarSexo(v) { sexo = v; document.querySelectorAll('#pf-sexo [data-sexo]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.sexo === v))); }
+  function imc() {
+    const p = parseFloat(String(f.peso().value).replace(',', '.')), a = parseFloat(String(f.alt().value).replace(',', '.'));
+    $('#pf-imc').textContent = p > 0 && a > 0 ? `IMC ${(p / ((a / 100) ** 2)).toFixed(1).replace('.', ',')}` : '';
+  }
+  function abrirForm(modo, perfil, orfas) {
+    ctx = { modo, perfil, orfas: orfas || 0 };
+    limparErros();
+    $('#pf-titulo').textContent = modo === 'editar' ? 'Dados da pessoa' : modo === 'primeiro' ? 'Quem vai usar?' : 'Nova pessoa';
+    $('#pf-intro').hidden = modo !== 'primeiro';
+    $('#pf-intro').innerHTML = `Cadastre a primeira pessoa. Depois você pode adicionar até ${MAX_PERFIS} pessoas e alternar pelo nome no topo.` + (orfas ? `<br><b>${plural(orfas, 'leitura já salva', 'leituras já salvas')} neste aparelho ${orfas === 1 ? 'será associada' : 'serão associadas'} a esta pessoa.</b>` : '');
+    $('#btn-pf-voltar').hidden = modo === 'primeiro';
+    f.nome().value = perfil ? perfil.nome : '';
+    f.nasc().value = perfil && perfil.nascimento ? perfil.nascimento : '';
+    f.peso().value = perfil && perfil.peso ? String(perfil.peso).replace('.', ',') : '';
+    f.alt().value = perfil && perfil.altura ? perfil.altura : '';
+    marcarSexo(perfil ? perfil.sexo || '' : '');
+    imc();
+    $('#btn-pf-excluir').hidden = !(modo === 'editar' && perfis.length > 1);
+    mostrar('perfil', telaAtual === 'inicio');
+    if (modo !== 'editar') setTimeout(() => f.nome().focus(), 50);
+  }
+  function validar() {
+    limparErros(); let ok = true;
+    const nome = f.nome().value.trim().replace(/\s+/g, ' ');
+    if (!nome) { erro('pf-c-nome', 'Informe o nome.'); ok = false; }
+    else if (perfis.some((p) => p.nome.toLowerCase() === nome.toLowerCase() && (!ctx.perfil || p.id !== ctx.perfil.id))) { erro('pf-c-nome', 'Já existe uma pessoa com esse nome.'); ok = false; }
+    if (!sexo) { erro('pf-c-sexo', 'Escolha uma opção.'); ok = false; }
+    const num = (el) => { const t = String(el.value).trim().replace(',', '.'); return t === '' ? null : Number(t); };
+    const peso = num(f.peso()), alt = num(f.alt());
+    if (peso != null && !(peso >= 20 && peso <= 300)) { erro('pf-c-peso', 'Peso entre 20 e 300 kg.'); ok = false; }
+    if (alt != null && !(Number.isInteger(alt) && alt >= 50 && alt <= 250)) { erro('pf-c-alt', 'Altura em centímetros, entre 50 e 250.'); ok = false; }
+    const nasc = f.nasc().value || null;
+    if (nasc && (nasc < '1900-01-01' || new Date(nasc + 'T00:00') > new Date())) { erro('pf-c-nasc', 'Data de nascimento inválida.'); ok = false; }
+    return ok ? { nome, sexo, peso: peso != null ? Math.round(peso * 10) / 10 : null, altura: alt, nascimento: nasc } : null;
+  }
+  async function salvar() {
+    const v = validar(); if (!v) return;
+    const agora = Date.now();
+    const usadas = new Set(perfis.map((p) => p.cor));
+    const cor = ctx.perfil ? ctx.perfil.cor : [...Array(MAX_PERFIS).keys()].find((i) => !usadas.has(i)) ?? perfis.length;
+    const p = ctx.perfil ? { ...ctx.perfil, ...v, updatedAt: agora } : { id: uuid(), cor, ...v, createdAt: agora, updatedAt: agora };
+    if (ctx.modo !== 'editar' && perfis.length >= MAX_PERFIS) { toast(`Limite de ${MAX_PERFIS} pessoas atingido`); return; }
+    const btn = $('#btn-pf-salvar'); btn.disabled = true;
+    try {
+      if (ctx.modo === 'primeiro') await DB.primeiroPerfil(p); else await DB.putPerfil(p);
+      const lidos = await DB.perfis();
+      if (!lidos.some((x) => x.id === p.id && x.nome === p.nome)) throw new Error('A pessoa não foi encontrada no armazenamento depois de salvar.');
+      if (ctx.modo !== 'editar') { perfilAtual = p.id; salvarPerfilAtual(p.id); }
+      toast(ctx.modo === 'editar' ? 'Dados salvos' : `Pessoa cadastrada: ${p.nome}`);
+      if (ctx.modo === 'primeiro') mostrar('inicio', false); else voltarInicio();
+      await carregar();
+    } catch (e) {
+      await dialog({ title: 'Os dados NÃO foram salvos', text: 'Os campos continuam preenchidos. Tente de novo.', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
+    } finally { btn.disabled = false; }
+  }
+  async function excluir() {
+    const p = ctx.perfil, n = todas.filter((r) => r.profileId === p.id).length;
+    const ok1 = await dialog({ title: `Excluir ${p.nome}?`, text: `Isso apaga a pessoa e ${plural(n, 'leitura', 'leituras')} dela. Não pode ser desfeito. Se tiver dúvida, exporte um backup antes pelo menu ⋯.`, buttons: [{ label: 'Cancelar', value: false }, { label: 'Continuar', value: true, cls: 'btn-perigo' }] });
+    if (!ok1) return;
+    const ok2 = await dialog({ title: 'Tem certeza?', text: `${p.nome} e ${plural(n, 'leitura', 'leituras')} serão apagadas agora.`, buttons: [{ label: 'Cancelar', value: false }, { label: `Excluir ${p.nome}`, value: true, cls: 'btn-perigo' }] });
+    if (!ok2) return;
+    try {
+      await DB.delPerfil(p.id);
+      const [ps, ls] = await Promise.all([DB.perfis(), DB.all()]);
+      if (ps.some((x) => x.id === p.id) || ls.some((r) => r.profileId === p.id)) throw new Error('Parte dos dados continua no armazenamento.');
+      if (perfilAtual === p.id) { perfilAtual = ps[0].id; salvarPerfilAtual(perfilAtual); }
+      toast(`Pessoa excluída: ${p.nome}`); voltarInicio(); await carregar();
+    } catch (e) {
+      await dialog({ title: 'Não foi possível excluir', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
+    }
+  }
+  function trocar(id) { perfilAtual = id; salvarPerfilAtual(id); registros = todas.filter((r) => r.profileId === id); renderTopo(); renderInicio(); if (telaAtual === 'painel') Painel.abrir(true); toast(`Mostrando ${perfilDe(id).nome}`); }
+  function abrirFolha() {
+    document.querySelectorAll('.toast').forEach((t) => t.remove());
+    const fundo = document.createElement('div'); fundo.className = 'fundo';
+    const cont = (id) => todas.filter((r) => r.profileId === id).length;
+    const cheio = perfis.length >= MAX_PERFIS, atual = perfilDe(perfilAtual);
+    fundo.innerHTML = `<div class="folha" role="menu" aria-label="Pessoas">
+      <div class="folha-titulo">Pessoas (${perfis.length} de ${MAX_PERFIS})</div>
+      <div class="pessoas">${perfis.map((p) => `<button class="pessoa${p.id === perfilAtual ? ' atual' : ''}" data-pessoa="${esc(p.id)}" role="menuitemradio" aria-checked="${p.id === perfilAtual}">${avatarHTML(p, 36)}<span><b>${esc(p.nome)}</b><small>${plural(cont(p.id), 'leitura', 'leituras')}</small></span>${p.id === perfilAtual ? '<svg class="ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>' : ''}</button>`).join('')}</div>
+      <button data-pa="editar" role="menuitem">Editar dados de ${esc(atual.nome)}</button>
+      <button data-pa="novo" role="menuitem" ${cheio ? 'disabled' : ''}>${cheio ? `Limite de ${MAX_PERFIS} pessoas atingido` : 'Adicionar pessoa'}</button>
+    </div>`;
+    fundo.onclick = (ev) => {
+      const b = ev.target.closest('button');
+      if (ev.target === fundo) { fundo.remove(); return; }
+      if (!b || b.disabled) return;
+      fundo.remove();
+      if (b.dataset.pessoa) { if (b.dataset.pessoa !== perfilAtual) trocar(b.dataset.pessoa); }
+      else if (b.dataset.pa === 'editar') abrirForm('editar', perfilDe(perfilAtual));
+      else if (b.dataset.pa === 'novo') abrirForm('novo', null);
+    };
+    $('#camada').appendChild(fundo);
+    fundo.querySelector('.pessoa.atual').focus();
+  }
+  $('#pf-sexo').addEventListener('click', (ev) => { const b = ev.target.closest('[data-sexo]'); if (b) { marcarSexo(b.dataset.sexo); limparCampo(b); } });
+  $('#pf-peso').addEventListener('input', imc); $('#pf-alt').addEventListener('input', imc);
+  $('#btn-pf-salvar').onclick = salvar;
+  $('#btn-pf-excluir').onclick = excluir;
+  $('#btn-pf-voltar').onclick = () => voltarInicio();
+  return { primeiro: (orfas) => abrirForm('primeiro', null, orfas), abrirFolha, emOnboarding: () => ctx && ctx.modo === 'primeiro' && !perfis.length };
 })();
 
 // ====================== foto da galeria ======================
@@ -427,14 +656,20 @@ function baixar(nome, tipo, conteudo) {
 }
 const hojeStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 async function exportarJSON() {
-  const all = await DB.all();
-  baixar(`pressao-backup-${hojeStr()}.json`, 'application/json', JSON.stringify({ app: 'pressao', versao: APP_VERSION, exportadoEm: new Date().toISOString(), leituras: all }, null, 1));
-  toast(`${plural(all.length, 'leitura exportada', 'leituras exportadas')}`);
+  const [ps, all] = await Promise.all([DB.perfis(), DB.all()]);
+  baixar(`pressao-backup-${hojeStr()}.json`, 'application/json', JSON.stringify({ app: 'pressao', versao: APP_VERSION, exportadoEm: new Date().toISOString(), perfis: ps, leituras: all }, null, 1));
+  toast(`${plural(all.length, 'leitura exportada', 'leituras exportadas')} de ${plural(ps.length, 'pessoa', 'pessoas')}`);
 }
 async function exportarCSV() {
-  const all = await DB.all();
-  const linhas = ['data;hora;sistolica;diastolica;pulso;origem;corrigida'];
-  for (const r of all.slice().reverse()) { const d = new Date(r.ts); linhas.push(`${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()};${fmtHora(r.ts)};${r.sys};${r.dia};${r.pulse};${r.source};${r.edited ? 'sim' : 'não'}`); }
+  const [ps, all] = await Promise.all([DB.perfis(), DB.all()]);
+  const nomes = new Map(ps.map((p) => [p.id, p.nome]));
+  const q = (t) => `"${String(t).replace(/"/g, '""')}"`;
+  const linhas = ['data;hora;pessoa;sistolica;diastolica;pulso;origem;corrigida;' + CATEGORIAS.map((c) => q(c.nome)).join(';') + ';nota livre'];
+  for (const r of all.slice().reverse()) {
+    const d = new Date(r.ts), n = r.nota || {};
+    const cats = CATEGORIAS.map((c) => { const v = n.cats && n.cats[c.k]; return v ? q([...(v.op || []), v.txt || ''].filter(Boolean).join(', ') || 'sim') : ''; });
+    linhas.push(`${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()};${fmtHora(r.ts)};${q(nomes.get(r.profileId) || '')};${r.sys};${r.dia};${r.pulse};${r.source};${r.edited ? 'sim' : 'não'};${cats.join(';')};${n.livre ? q(n.livre) : ''}`);
+  }
   baixar(`pressao-${hojeStr()}.csv`, 'text/csv;charset=utf-8', '\ufeff' + linhas.join('\r\n'));
   toast(`${plural(all.length, 'leitura exportada', 'leituras exportadas')}`);
 }
@@ -442,28 +677,43 @@ function validarRegistro(r) {
   const int = (v, a, b) => Number.isInteger(v) && v >= a && v <= b;
   return r && typeof r.id === 'string' && r.id && Number.isFinite(r.ts) && int(r.sys, 50, 280) && int(r.dia, 30, 200) && int(r.pulse, 30, 240) && r.dia < r.sys;
 }
+const validarPerfil = (p) => p && typeof p.id === 'string' && p.id && typeof p.nome === 'string' && p.nome.trim();
 async function importar(file) {
   if (!file) return;
   try {
     const dados = JSON.parse(await file.text());
     const lista = Array.isArray(dados) ? dados : dados && dados.leituras;
     if (!Array.isArray(lista)) throw new Error('O arquivo não é um backup deste app.');
+    const perfisArq = (dados && Array.isArray(dados.perfis) ? dados.perfis : []).filter(validarPerfil);
+    const [psAtuais, lsAtuais] = await Promise.all([DB.perfis(), DB.all()]);
+    const idsPerfil = new Set(psAtuais.map((p) => p.id));
+    const perfisNovos = perfisArq.filter((p) => !idsPerfil.has(p.id)).map((p) => ({ ...p, nome: p.nome.trim().slice(0, 30), cor: Number.isInteger(p.cor) ? p.cor : 0, createdAt: p.createdAt || Date.now(), updatedAt: p.updatedAt || Date.now() }));
+    if (psAtuais.length + perfisNovos.length > MAX_PERFIS) throw new Error(`O backup traria ${perfisNovos.length} pessoas novas e passaria do limite de ${MAX_PERFIS}. Nada foi importado.`);
+    perfisNovos.forEach((p) => idsPerfil.add(p.id));
     const validos = lista.filter(validarRegistro), invalidos = lista.length - validos.length;
-    const atuais = new Map((await DB.all()).map((r) => [r.id, r]));
+    let semDono = 0;
+    const ajustados = validos.map((r) => { if (!r.profileId || !idsPerfil.has(r.profileId)) { semDono++; return { ...r, profileId: perfilAtual }; } return r; });
+    const atuais = new Map(lsAtuais.map((r) => [r.id, r]));
     const gravar = []; let novos = 0, atualizados = 0, iguais = 0;
-    for (const r of validos) {
+    for (const r of ajustados) {
       const a = atuais.get(r.id);
       if (!a) { gravar.push(r); novos++; }
       else if ((r.updatedAt || 0) > (a.updatedAt || 0)) { gravar.push(r); atualizados++; }
       else iguais++;
     }
-    const ok = await dialog({ title: 'Importar backup?', text: `${plural(novos, 'leitura nova', 'leituras novas')}, ${plural(atualizados, 'atualizada', 'atualizadas')}, ${plural(iguais, 'já existente', 'já existentes')}${invalidos ? `, ${plural(invalidos, 'ignorada', 'ignoradas')} por estar incompleta` : ''}. Nenhuma leitura atual será apagada.`, buttons: [{ label: 'Cancelar', value: false }, { label: 'Importar', value: true, cls: 'btn-start' }] });
+    const nomeAtual = (perfilDe(perfilAtual) || { nome: '' }).nome;
+    const partes = [`${plural(novos, 'leitura nova', 'leituras novas')}, ${plural(atualizados, 'atualizada', 'atualizadas')}, ${plural(iguais, 'já existente', 'já existentes')}`];
+    if (perfisNovos.length) partes.push(`${plural(perfisNovos.length, 'pessoa nova', 'pessoas novas')}: ${perfisNovos.map((p) => p.nome).join(', ')}`);
+    if (semDono) partes.push(`${plural(semDono, 'leitura sem pessoa definida vai', 'leituras sem pessoa definida vão')} para ${nomeAtual}`);
+    if (invalidos) partes.push(`${plural(invalidos, 'ignorada', 'ignoradas')} por estar incompleta`);
+    const ok = await dialog({ title: 'Importar backup?', text: partes.join('. ') + '. Nenhuma leitura atual será apagada.', buttons: [{ label: 'Cancelar', value: false }, { label: 'Importar', value: true, cls: 'btn-start' }] });
     if (!ok) return;
-    await DB.putMany(gravar);
-    const depois = new Set((await DB.all()).map((r) => r.id));
-    const faltando = gravar.filter((r) => !depois.has(r.id)).length;
-    if (faltando) throw new Error(`${faltando} leituras não foram gravadas.`);
-    toast(gravar.length ? plural(gravar.length, 'leitura importada', 'leituras importadas') : 'Nada novo para importar'); await carregar();
+    await DB.importar(perfisNovos, gravar);
+    const [psDepois, lsDepois] = await Promise.all([DB.perfis(), DB.all()]);
+    const idsL = new Set(lsDepois.map((r) => r.id)), idsP = new Set(psDepois.map((p) => p.id));
+    const faltando = gravar.filter((r) => !idsL.has(r.id)).length + perfisNovos.filter((p) => !idsP.has(p.id)).length;
+    if (faltando) throw new Error(`${faltando} itens não foram gravados.`);
+    toast(gravar.length || perfisNovos.length ? plural(gravar.length, 'leitura importada', 'leituras importadas') : 'Nada novo para importar'); await carregar();
   } catch (e) {
     await dialog({ title: 'O backup não foi importado', text: 'Suas leituras atuais não foram alteradas.', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
   } finally { $('#in-backup').value = ''; }
@@ -495,7 +745,8 @@ function abrirMenu() {
 // ====================== painel (dashboard) ======================
 const Painel = (() => {
   const DIA_MS = 86400000;
-  const st = { periodo: 'semana', ancora: null, modo: 'valores', pulso: true, sel: null, itens: [] };
+  const st = { periodo: 'semana', ancora: null, modo: 'valores', pulso: true, sel: null, itens: [], filtro: '' };
+  const passaFiltro = (r) => !st.filtro || (st.filtro === 'qualquer' ? temNota(r) : !!(r.nota && r.nota.cats && r.nota.cats[st.filtro]));
   const inicioDia = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const addDias = (ms, n) => { const d = new Date(ms); d.setDate(d.getDate() + n); return d.getTime(); };
   const chaveDia = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
@@ -516,13 +767,13 @@ const Painel = (() => {
   }
   // itens do gráfico/lista: leituras individuais (dia, semana) ou médias diárias (mês)
   function montarItens() {
-    const asc = registros.slice().sort((x, y) => x.ts - y.ts);
+    const asc = registros.filter(passaFiltro).sort((x, y) => x.ts - y.ts);
     const j = janela(st.periodo, st.ancora);
     let todos;
     if (st.periodo === 'mes') {
       const grupos = new Map();
       for (const r of asc) { const k = chaveDia(r.ts); if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(r); }
-      todos = [...grupos.entries()].map(([k, rs]) => ({ id: 'd-' + k, ts: inicioDia(rs[0].ts) + DIA_MS / 2, sys: media(rs.map((r) => r.sys)), dia: media(rs.map((r) => r.dia)), pulse: media(rs.map((r) => r.pulse)), n: rs.length }));
+      todos = [...grupos.entries()].map(([k, rs]) => ({ id: 'd-' + k, ts: inicioDia(rs[0].ts) + DIA_MS / 2, sys: media(rs.map((r) => r.sys)), dia: media(rs.map((r) => r.dia)), pulse: media(rs.map((r) => r.pulse)), n: rs.length, notas: rs.filter(temNota) }));
     } else todos = asc.map((r) => ({ id: r.id, ts: r.ts, sys: r.sys, dia: r.dia, pulse: r.pulse, n: 1, rec: r }));
     todos.forEach((it, i) => { it.prev = i > 0 ? todos[i - 1] : null; });
     const dentro = todos.filter((it) => it.ts >= j.ini && it.ts < j.fim);
@@ -554,7 +805,7 @@ const Painel = (() => {
   // ---------- gráfico ----------
   // Eixo X por "casas": cada leitura (ou média diária no mês) ocupa uma casa larga; dias sem leitura viram casas estreitas.
   // Se não couber na largura da tela, o gráfico rola na horizontal.
-  const AX = 36, GH = 250, GT = 34, GB = 30;
+  const AX = 36, GT = 34, PH = 172, XB = 30, PGAP = 26, HP = 112;
   function casas(itens, j) {
     const cs = [];
     const porDia = new Map();
@@ -572,6 +823,21 @@ const Painel = (() => {
     return cs;
   }
   const abrev = (v) => String(Math.floor(v / 10)); // 145 -> 14, 94 -> 9 (como se fala: "14 por 9")
+  // caminho estilo monitor cardíaco: linha entre os pontos com um "batimento" logo depois de cada leitura
+  function tracadoECG(pts, raio) {
+    if (!pts.length) return '';
+    let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dx = b.x - a.x;
+      if (dx > raio * 2 + 16) {
+        // P, QRS e T compactos (14 px), logo depois do losango
+        const x0 = a.x + raio + 1, y0 = a.y + ((b.y - a.y) * (raio + 1)) / dx;
+        d += ` L${x0.toFixed(1)},${y0.toFixed(1)} l2,-3 l2,3 l1.5,4 l2,-18 l2,22 l1.5,-8 l3,-3 l2,3`;
+      }
+      d += ` L${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+    }
+    return `<path class="ecg" d="${d}" fill="none" stroke="var(--pulso)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
   function grafico(itens, j) {
     const box = $('#pn-grafico');
     const disp = Math.max(260, (box.clientWidth || 340) - AX - 2);
@@ -581,10 +847,20 @@ const Painel = (() => {
     cs.forEach((c) => { c.w *= f; });
     total = Math.max(disp, Math.round(total * f));
     let acc = 8 * f; cs.forEach((c) => { c.x = acc + c.w / 2; acc += c.w; });
-    const ph = GH - GT - GB;
-    let g = '', eixo = '', marcas = '', alvos = '';
-    // rótulos do eixo X e divisórias entre dias
-    if (st.periodo === 'dia') cs.forEach((c) => { g += `<text x="${c.x.toFixed(1)}" y="${GH - 9}" font-size="11" text-anchor="middle" fill="#6B757D">${c.rot}</text>`; });
+    const comPulso = st.pulso;
+    const P0 = GT + PH + PGAP;                       // topo do painel do pulso
+    const fimPlot = comPulso ? P0 + HP : GT + PH;    // fim da última área de gráfico
+    const GH = fimPlot + XB;
+    let g = '', eixo = '', marcas = '', alvos = '', fundo = '';
+    // painel do pulso: papel de eletrocardiograma
+    if (comPulso) {
+      fundo += `<defs><pattern id="papel-ecg" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="#F6D9C2" stroke-width="0.6"/></pattern></defs>`;
+      fundo += `<rect class="grade-pulso" x="0" y="${P0}" width="${total}" height="${HP}" fill="#FFF7F0"/><rect x="0" y="${P0}" width="${total}" height="${HP}" fill="url(#papel-ecg)"/>`;
+      eixo += `<text x="${AX - 4}" y="${P0 - 9}" font-size="9.5" font-weight="700" text-anchor="end" fill="var(--pulso)">♥bpm</text>`;
+    }
+    // rótulos do eixo X (embaixo de tudo) e divisórias entre dias (atravessam os dois painéis)
+    const yRot = GH - 9;
+    if (st.periodo === 'dia') cs.forEach((c) => { g += `<text x="${c.x.toFixed(1)}" y="${yRot}" font-size="11" text-anchor="middle" fill="#6B757D">${c.rot}</text>`; });
     else {
       let i = 0;
       while (i < cs.length) {
@@ -592,66 +868,95 @@ const Painel = (() => {
         const x0 = cs[i].x - cs[i].w / 2, x1 = cs[k].x + cs[k].w / 2, xm = (x0 + x1) / 2;
         const temLeitura = cs.slice(i, k + 1).some((c) => c.it);
         if (st.periodo === 'semana' || temLeitura || new Date(cs[i].dia).getDate() % 5 === 1)
-          g += `<text x="${xm.toFixed(1)}" y="${GH - 9}" font-size="${st.periodo === 'semana' ? 11 : 10.5}" text-anchor="middle" fill="${temLeitura ? '#3B4650' : '#A3ACB2'}" font-weight="${temLeitura ? 600 : 400}">${cs[i].rot}</text>`;
-        if (i > 0) g += `<line x1="${x0.toFixed(1)}" x2="${x0.toFixed(1)}" y1="${GT}" y2="${GT + ph}" stroke="#EDF0EB"/>`;
+          g += `<text x="${xm.toFixed(1)}" y="${yRot}" font-size="${st.periodo === 'semana' ? 11 : 10.5}" text-anchor="middle" fill="${temLeitura ? '#3B4650' : '#A3ACB2'}" font-weight="${temLeitura ? 600 : 400}">${cs[i].rot}</text>`;
+        if (i > 0) {
+          g += `<line x1="${x0.toFixed(1)}" x2="${x0.toFixed(1)}" y1="${GT}" y2="${GT + PH}" stroke="#EDF0EB"/>`;
+          if (comPulso) g += `<line x1="${x0.toFixed(1)}" x2="${x0.toFixed(1)}" y1="${P0}" y2="${P0 + HP}" stroke="#EDC9AA"/>`;
+        }
         i = k + 1;
       }
     }
     const comItem = cs.filter((c) => c.it);
     const svgEixo = (conteudo) => `<svg class="eixo" viewBox="0 0 ${AX} ${GH}" width="${AX}" height="${GH}" aria-hidden="true">${conteudo}</svg>`;
+    const svgPrincipal = (conteudo, rotulo) => `<div class="gr-wrap">${svgEixo(eixo)}<div class="gr-rolagem"><svg class="principal" viewBox="0 0 ${total} ${GH}" width="${total}" height="${GH}" role="img" aria-label="${rotulo}">${conteudo}</svg></div></div>`;
     if (!comItem.length) {
-      g += `<text x="${total / 2}" y="${GT + ph / 2}" text-anchor="middle" font-size="13" fill="#6B757D">Nenhuma leitura neste período</text>`;
-      return `<div class="gr-wrap">${svgEixo('')}<div class="gr-rolagem"><svg class="principal" viewBox="0 0 ${total} ${GH}" width="${total}" height="${GH}" role="img" aria-label="Gráfico vazio">${g}</svg></div></div>`;
+      g += `<text x="${total / 2}" y="${GT + PH / 2}" text-anchor="middle" font-size="13" fill="#6B757D">Nenhuma leitura neste período</text>`;
+      return svgPrincipal(fundo + g, 'Gráfico vazio');
     }
     const menorCasa = Math.min(...comItem.map((c) => c.w));
     const bw = Math.max(16, Math.min(26, menorCasa * 0.5));
     const raio = Math.max(12, bw / 2 + 2);
+    // escala própria do pulso
+    const pulsos = comItem.map((c) => c.it.pulse);
+    let plo = Math.floor((Math.min(...pulsos) - 12) / 10) * 10, phi = Math.ceil((Math.max(...pulsos) + 12) / 10) * 10;
+    if (phi - plo < 40) { const m = (phi + plo) / 2; plo = Math.floor((m - 20) / 10) * 10; phi = plo + 40; }
+    const YP = (v) => P0 + 16 + ((phi - v) * (HP - 32)) / (phi - plo);
     if (st.modo === 'valores') {
-      let lo = Math.min(...itens.map((it) => st.pulso ? Math.min(it.dia, it.pulse) : it.dia)), hi = Math.max(...itens.map((it) => st.pulso ? Math.max(it.sys, it.pulse) : it.sys));
+      let lo = Math.min(...itens.map((it) => it.dia)), hi = Math.max(...itens.map((it) => it.sys));
       lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
-      const Y = (v) => GT + ((hi - v) * ph) / (hi - lo);
+      const Y = (v) => GT + ((hi - v) * PH) / (hi - lo);
       const passo = hi - lo > 100 ? 40 : 20;
       for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) { g = `<line x1="0" x2="${total}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E6EAE4"/>` + g; eixo += `<text x="${AX - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`; }
-      if (st.pulso && comItem.length > 1) g += `<polyline fill="none" stroke="var(--pulso)" stroke-width="1.6" stroke-dasharray="3 3" points="${comItem.map((c) => `${c.x.toFixed(1)},${Y(c.it.pulse).toFixed(1)}`).join(' ')}"/>`;
       for (const c of comItem) {
         const it = c.it, x = c.x, ys = Y(it.sys), yd = Y(it.dia), sel = it.id === st.sel;
         g += `<rect x="${(x - bw / 2).toFixed(1)}" y="${ys.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, yd - ys).toFixed(1)}" rx="${(bw / 2).toFixed(1)}" fill="${sel ? 'var(--ambar)' : 'rgba(46,50,114,0.20)'}"/>`;
-        if (st.pulso) g += `<rect x="${(x - 4).toFixed(1)}" y="${(Y(it.pulse) - 4).toFixed(1)}" width="8" height="8" transform="rotate(45 ${x.toFixed(1)} ${Y(it.pulse).toFixed(1)})" fill="var(--pulso)" stroke="#fff" stroke-width="1"/>`;
         g += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="${raio}" fill="var(--sys)" stroke="#fff" stroke-width="2"/><text class="num-sys" x="${x.toFixed(1)}" y="${(ys + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.sys)}</text>`;
         g += `<circle cx="${x.toFixed(1)}" cy="${yd.toFixed(1)}" r="${raio}" fill="var(--dia)" stroke="#fff" stroke-width="2"/><text class="num-dia" x="${x.toFixed(1)}" y="${(yd + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.dia)}</text>`;
       }
+      if (comPulso) {
+        const pp = passoPulso(phi - plo);
+        for (let v = Math.ceil(plo / pp) * pp; v <= phi; v += pp) { g += `<line x1="0" x2="${total}" y1="${YP(v).toFixed(1)}" y2="${YP(v).toFixed(1)}" stroke="#E9B98F" stroke-width="0.8"/>`; eixo += `<text x="${AX - 6}" y="${(YP(v) + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="var(--pulso)" font-weight="600">${v}</text>`; }
+        const pts = comItem.map((c) => ({ x: c.x, y: YP(c.it.pulse) }));
+        g += tracadoECG(pts, 15);
+        const lado = 21;
+        for (const c of comItem) {
+          const x = c.x, y = YP(c.it.pulse), sel = c.it.id === st.sel;
+          g += `<rect x="${(x - lado / 2).toFixed(1)}" y="${(y - lado / 2).toFixed(1)}" width="${lado}" height="${lado}" rx="3" transform="rotate(45 ${x.toFixed(1)} ${y.toFixed(1)})" fill="var(--pulso)" stroke="${sel ? 'var(--ambar)' : '#fff'}" stroke-width="${sel ? 3 : 2}"/><text class="num-pulso" x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" font-size="${c.it.pulse >= 100 ? 10.5 : 12}" font-weight="700" text-anchor="middle" fill="#fff">${c.it.pulse}</text>`;
+        }
+      }
     } else {
-      const ds = itens.filter((it) => it.prev).flatMap((it) => [it.sys - it.prev.sys, it.dia - it.prev.dia].concat(st.pulso ? [it.pulse - it.prev.pulse] : []));
+      const ds = itens.filter((it) => it.prev).flatMap((it) => [it.sys - it.prev.sys, it.dia - it.prev.dia]);
       const m = Math.max(10, Math.ceil((Math.max(0, ...ds.map(Math.abs)) + 2) / 10) * 10);
-      const Y = (v) => GT + ((m - v) * ph) / (2 * m);
+      const Y = (v) => GT + ((m - v) * PH) / (2 * m);
       for (const v of [-m, -m / 2, 0, m / 2, m]) { const vv = Math.round(v); g = `<line x1="0" x2="${total}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === 0 ? '#9AA4AB' : '#E6EAE4'}"/>` + g; eixo += `<text x="${AX - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${vv > 0 ? '+' + vv : vv < 0 ? '−' + -vv : '0'}</text>`; }
-      const nb = st.pulso ? 3 : 2, sb = Math.max(6, Math.min(12, (menorCasa * 0.75) / nb));
+      const sb = Math.max(7, Math.min(13, (menorCasa * 0.7) / 2));
       for (const c of comItem) {
         const it = c.it, x = c.x;
         if (!it.prev) { g += `<circle cx="${x.toFixed(1)}" cy="${Y(0)}" r="4" fill="none" stroke="#9AA4AB" stroke-width="1.5"/>`; continue; }
-        const vals = [it.sys - it.prev.sys, it.dia - it.prev.dia].concat(st.pulso ? [it.pulse - it.prev.pulse] : []);
-        vals.forEach((d, k) => {
-          const x0 = x - (nb * sb) / 2 + k * sb, y0 = Y(Math.max(0, d)), hh = Math.max(2, Math.abs(Y(d) - Y(0)));
-          const cor = k === 2 ? 'var(--pulso)' : d > 0 ? 'var(--sobe)' : d < 0 ? 'var(--desce)' : '#9AA4AB';
-          g += `<rect x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${(sb - 1.5).toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="${cor}" opacity="${k === 1 ? 0.65 : 1}"/>`;
+        [it.sys - it.prev.sys, it.dia - it.prev.dia].forEach((d, k) => {
+          const x0 = x - sb + k * sb, y0 = Y(Math.max(0, d)), hh = Math.max(2, Math.abs(Y(d) - Y(0)));
+          g += `<rect x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${(sb - 1.5).toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="${d > 0 ? 'var(--sobe)' : d < 0 ? 'var(--desce)' : '#9AA4AB'}" opacity="${k === 1 ? 0.65 : 1}"/>`;
         });
       }
+      if (comPulso) {
+        const dp = itens.filter((it) => it.prev).map((it) => it.pulse - it.prev.pulse);
+        const mp = Math.max(10, Math.ceil((Math.max(0, ...dp.map(Math.abs)) + 2) / 10) * 10);
+        const Yd = (v) => P0 + 12 + ((mp - v) * (HP - 24)) / (2 * mp);
+        for (const v of [-mp, 0, mp]) { g += `<line x1="0" x2="${total}" y1="${Yd(v).toFixed(1)}" y2="${Yd(v).toFixed(1)}" stroke="${v === 0 ? '#C98A57' : '#E9B98F'}" stroke-width="${v === 0 ? 1.2 : 0.8}"/>`; eixo += `<text x="${AX - 6}" y="${(Yd(v) + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="var(--pulso)" font-weight="600">${v > 0 ? '+' + v : v < 0 ? '−' + -v : '0'}</text>`; }
+        for (const c of comItem) {
+          const it = c.it, x = c.x;
+          if (!it.prev) { g += `<circle cx="${x.toFixed(1)}" cy="${Yd(0).toFixed(1)}" r="4" fill="none" stroke="#C98A57" stroke-width="1.5"/>`; continue; }
+          const d = it.pulse - it.prev.pulse, y0 = Yd(Math.max(0, d)), hh = Math.max(2, Math.abs(Yd(d) - Yd(0)));
+          g += `<rect class="barra-pulso" x="${(x - sb / 2).toFixed(1)}" y="${y0.toFixed(1)}" width="${sb.toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="var(--pulso)"/>`;
+        }
+      }
     }
-    // seleção: guia vertical + etiqueta
+    // seleção: guia vertical (atravessa os dois painéis) + etiqueta
     const s = comItem.find((c) => c.it.id === st.sel);
     if (s) {
       const x = s.x, it = s.it, d = new Date(it.ts);
-      marcas += `<line x1="${x}" x2="${x}" y1="${GT - 6}" y2="${GT + ph}" stroke="var(--ambar)" stroke-width="2" stroke-dasharray="4 3"/>`;
-      const txt = st.periodo === 'mes' ? `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} · média ${it.sys}/${it.dia}` : `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} ${fmtHora(it.ts)} · ${it.sys}/${it.dia} · ${it.pulse}`;
+      marcas += `<line x1="${x}" x2="${x}" y1="${GT - 6}" y2="${fimPlot}" stroke="var(--ambar)" stroke-width="2" stroke-dasharray="4 3"/>`;
+      const txt = st.periodo === 'mes' ? `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} · média ${it.sys}/${it.dia} · ${it.pulse}` : `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} ${fmtHora(it.ts)} · ${it.sys}/${it.dia} · ${it.pulse}`;
       const tw = txt.length * 6.1 + 16, tx = Math.min(total - tw - 2, Math.max(2, x - tw / 2));
       marcas += `<rect x="${tx}" y="5" width="${tw}" height="21" rx="10.5" fill="var(--tinta)"/><text x="${tx + tw / 2}" y="19.5" font-size="11" text-anchor="middle" fill="#fff" font-weight="600">${esc(txt)}</text>`;
     }
-    for (const c of comItem) alvos += `<circle class="alvo" data-id="${esc(c.it.id)}" cx="${c.x.toFixed(1)}" cy="${GT + ph / 2}" r="0" fill="transparent"/>`;
-    return `<div class="gr-wrap">${svgEixo(eixo)}<div class="gr-rolagem"><svg class="principal" viewBox="0 0 ${total} ${GH}" width="${total}" height="${GH}" role="img" aria-label="Gráfico de ${comItem.length} ${st.periodo === 'mes' ? 'dias' : 'leituras'}; toque num ponto para ver na lista">${g}${marcas}${alvos}</svg></div></div>`;
+    for (const c of comItem) alvos += `<circle class="alvo" data-id="${esc(c.it.id)}" cx="${c.x.toFixed(1)}" cy="${GT + PH / 2}" r="0" fill="transparent"/>`;
+    return svgPrincipal(fundo + g + marcas + alvos, `Gráfico de ${comItem.length} ${st.periodo === 'mes' ? 'dias' : 'leituras'}${comPulso ? ', com pulso abaixo' : ''}; toque num ponto para ver na lista`);
   }
+  const passoPulso = (span) => (span > 100 ? 40 : span > 40 ? 20 : 10);
   // ---------- lista ----------
   function lista(itens) {
-    if (!itens.length) return `<p class="pn-vazio">Nenhuma leitura ${st.periodo === 'dia' ? 'neste dia' : st.periodo === 'semana' ? 'nesta semana' : 'neste mês'}. Use as setas para ver outros períodos.</p>`;
+    if (!itens.length) return `<p class="pn-vazio">${st.filtro ? 'Nenhuma leitura com esta nota' : 'Nenhuma leitura'} ${st.periodo === 'dia' ? 'neste dia' : st.periodo === 'semana' ? 'nesta semana' : 'neste mês'}.${registros.filter(passaFiltro).length ? ' Use as setas para ver outros períodos.' : ''}</p>`;
     let html = '', grupo = '';
     for (const it of itens.slice().reverse()) {
       const d = new Date(it.ts);
@@ -669,14 +974,17 @@ const Painel = (() => {
         meio = `<span class="valores">${delta(it.sys, it.prev.sys)}${delta(it.dia, it.prev.dia)}<span class="sub">${it.sys}/${it.dia} ${st.periodo === 'mes' ? 'vs dia anterior com leitura' : 'vs leitura anterior'}</span></span>`;
         dir = `${delta(it.pulse, it.prev.pulse)}<span class="sub">${it.pulse} bpm</span>`;
       }
-      html += `<li><button class="pn-item${it.id === st.sel ? ' sel' : ''}" data-id="${esc(it.id)}"><span class="quando">${quando}</span>${meio}<span class="dir">${dir}</span></button></li>`;
+      const notas = it.rec ? (temNota(it.rec) ? [it.rec] : []) : (it.notas || []);
+      let exp = '';
+      if (it.id === st.sel && notas.length) exp = `<div class="nota-exp">${notas.map((r) => `${st.periodo === 'mes' ? `<div class="nota-exp-h">${fmtHora(r.ts)} · ${r.sys}/${r.dia}</div>` : ''}${notaLinhas(r.nota).map((l) => `<div><b>${esc(l.nome)}:</b> ${esc(l.texto)}</div>`).join('')}`).join('')}</div>`;
+      html += `<li><button class="pn-item${it.id === st.sel ? ' sel' : ''}" data-id="${esc(it.id)}"><span class="quando">${quando}</span>${meio.replace(/<\/span>$/, (notas.length ? ICONE_NOTA : '') + '</span>')}<span class="dir">${dir}</span></button>${exp}</li>`;
     }
     return html + '</ul>';
   }
   // ---------- navegação só por períodos com leituras ----------
   function vizinho(dir) {
     const j = janela(st.periodo, st.ancora);
-    const asc = registros.slice().sort((x, y) => x.ts - y.ts);
+    const asc = registros.filter(passaFiltro).sort((x, y) => x.ts - y.ts);
     if (!asc.length) return null;
     if (dir < 0) {
       const r = [...asc].reverse().find((x) => x.ts < j.ini);
@@ -690,6 +998,13 @@ const Painel = (() => {
     return Math.min(addDias(inicioDia(r.ts), 6) + DIA_MS / 2, Math.max(r.ts, ultimo));
   }
   function render(rolar) {
+    // filtro: nome direto da categoria + quantidade; opções vazias ficam desativadas
+    const fsel = $('#pn-filtro');
+    const conta = (k) => registros.filter((r) => (k === 'qualquer' ? temNota(r) : !!(r.nota && r.nota.cats && r.nota.cats[k]))).length;
+    const opcs = [['', 'Todas as leituras', registros.length], ['qualquer', 'Anotação', conta('qualquer')]].concat(CATEGORIAS.map((c) => [c.k, c.nome, conta(c.k)]));
+    if (st.filtro && !opcs.some(([k, , n]) => k === st.filtro && n > 0)) st.filtro = '';
+    fsel.innerHTML = opcs.map(([k, nome, n]) => `<option value="${k}"${k && !n ? ' disabled' : ''}>${esc(nome)} (${n})</option>`).join('');
+    fsel.value = st.filtro;
     const { j, itens, noPeriodo, antes } = montarItens();
     st.itens = itens;
     if (st.sel && !itens.some((it) => it.id === st.sel)) st.sel = null;
@@ -733,9 +1048,10 @@ const Painel = (() => {
   }
   // ---------- calendário ----------
   function abrirCalendario() {
-    const diasCom = new Set(registros.map((r) => chaveDia(r.ts)));
+    const doFiltro = registros.filter(passaFiltro);
+    const diasCom = new Set(doFiltro.map((r) => chaveDia(r.ts)));
     if (!diasCom.size) { toast('Ainda não há leituras registradas'); return; }
-    const mesesCom = [...new Set(registros.map((r) => { const d = new Date(r.ts); return d.getFullYear() * 12 + d.getMonth(); }))].sort((a, b) => a - b);
+    const mesesCom = [...new Set(doFiltro.map((r) => { const d = new Date(r.ts); return d.getFullYear() * 12 + d.getMonth(); }))].sort((a, b) => a - b);
     const a0 = new Date(st.ancora); let mes = a0.getFullYear() * 12 + a0.getMonth();
     if (!mesesCom.includes(mes)) mes = mesesCom[mesesCom.length - 1];
     const j = janela(st.periodo, st.ancora);
@@ -781,10 +1097,19 @@ const Painel = (() => {
   }
   function abrir() {
     const ult = registros[0];
-    st.ancora = ult ? ult.ts : Date.now(); st.sel = null;
+    st.ancora = ult ? ult.ts : Date.now(); st.sel = null; st.filtro = '';
+    const p = perfilDe(perfilAtual); $('#painel-pessoa').textContent = p ? p.nome : '';
     mostrar('painel');
     render('fim');
   }
+  $('#pn-filtro').addEventListener('change', (ev) => {
+    st.filtro = ev.target.value; st.sel = null;
+    // se o período atual ficou vazio com o filtro, vai para o período mais recente que tenha leituras
+    const lst = registros.filter(passaFiltro);
+    const j = janela(st.periodo, st.ancora);
+    if (lst.length && !lst.some((r) => r.ts >= j.ini && r.ts < j.fim)) st.ancora = lst[0].ts;
+    render('fim');
+  });
   let rz = 0;
   window.addEventListener('resize', () => { if (telaAtual !== 'painel') return; cancelAnimationFrame(rz); rz = requestAnimationFrame(() => render()); });
   $('#painel').addEventListener('click', (ev) => {
@@ -820,8 +1145,13 @@ function abrirAdicionar() {
   f.querySelector('button').focus();
 }
 
+// o aviso de erro de um campo some assim que a pessoa corrige
+function limparCampo(el) { const c = el.closest('.campo.erro'); if (c) { c.classList.remove('erro'); const m = c.querySelector('.msg-erro'); if (m) m.hidden = true; } }
+document.addEventListener('input', (ev) => limparCampo(ev.target));
+
 // ====================== ligações ======================
 $('#btn-add').onclick = abrirAdicionar;
+$('#btn-perfil').onclick = () => Perfil.abrirFolha();
 $('#btn-painel').onclick = () => Painel.abrir();
 $('#btn-painel-voltar').onclick = () => voltarInicio();
 $('#btn-cam-fechar').onclick = () => { Camera.parar(); voltarInicio(); };
