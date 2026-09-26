@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -135,6 +135,10 @@ function renderInicio() {
     $('#ultimo').innerHTML = `<div class="visor-vazio">Nenhuma leitura ainda.<br>Toque em <b>Ler o aparelho</b> e aponte a câmera para o visor.</div>`;
     $('#ultimo-quando').textContent = ''; $('#ultimo-origem').textContent = '';
   }
+  // gráfico simples das últimas 20 leituras
+  const serie = registros.slice(0, 20).reverse();
+  $('#bloco-grafico').hidden = serie.length < 2;
+  if (serie.length >= 2) $('#grafico').innerHTML = graficoSVG(serie);
   // lista
   if (!registros.length) { $('#lista').innerHTML = `<p class="vazio">As leituras salvas aparecem aqui, da mais recente para a mais antiga.</p>`; return; }
   let html = '', diaAtual = '';
@@ -147,6 +151,20 @@ function renderInicio() {
   html += '</ul>';
   $('#lista').innerHTML = html;
 }
+function graficoSVG(s) {
+  const W = 320, H = 150, L = 30, R = 8, T = 10, B = 22;
+  let lo = Math.min(...s.map((r) => r.dia)), hi = Math.max(...s.map((r) => r.sys));
+  lo = Math.floor((lo - 8) / 10) * 10; hi = Math.ceil((hi + 8) / 10) * 10;
+  const X = (i) => L + (i * (W - L - R)) / (s.length - 1), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
+  let g = '';
+  const passo = hi - lo > 80 ? 40 : 20;
+  for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E3E7E1"/><text x="${L - 6}" y="${Y(v) + 4}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`;
+  const linha = (k, cor) => `<polyline fill="none" stroke="${cor}" stroke-width="2.4" stroke-linejoin="round" points="${s.map((r, i) => `${X(i).toFixed(1)},${Y(r[k]).toFixed(1)}`).join(' ')}"/>` + s.map((r, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(r[k]).toFixed(1)}" r="3" fill="${cor}"/>`).join('');
+  const d0 = new Date(s[0].ts), d1 = new Date(s[s.length - 1].ts);
+  g += `<text x="${L}" y="${H - 6}" font-size="10" fill="#6B757D">${d0.getDate()}/${d0.getMonth() + 1}</text><text x="${W - R}" y="${H - 6}" font-size="10" text-anchor="end" fill="#6B757D">${d1.getDate()}/${d1.getMonth() + 1}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico das últimas ${s.length} leituras">${g}${linha('sys', 'var(--sys)')}${linha('dia', 'var(--dia)')}</svg>`;
+}
+
 // ====================== navegação ======================
 let telaAtual = 'inicio';
 function mostrar(nome, push = true) {
@@ -453,9 +471,9 @@ async function importar(file) {
 
 // ====================== menu ======================
 function abrirMenu() {
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
   const f = document.createElement('div'); f.className = 'fundo';
   f.innerHTML = `<div class="folha" role="menu">
-    <button data-a="foto" role="menuitem">Ler de uma foto da galeria</button>
     <button data-a="json" role="menuitem">Exportar backup (JSON)</button>
     <button data-a="csv" role="menuitem">Exportar planilha (CSV)</button>
     <button data-a="imp" role="menuitem">Importar backup</button>
@@ -464,8 +482,7 @@ function abrirMenu() {
     const a = ev.target.dataset && ev.target.dataset.a;
     if (ev.target === f || a) f.remove();
     try {
-      if (a === 'foto') $('#in-foto').click();
-      else if (a === 'json') await exportarJSON();
+      if (a === 'json') await exportarJSON();
       else if (a === 'csv') await exportarCSV();
       else if (a === 'imp') $('#in-backup').click();
     } catch (e) { dialog({ title: 'Não foi possível exportar', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] }); }
@@ -678,16 +695,19 @@ const Painel = (() => {
 
 // ====================== botão adicionar ======================
 function abrirAdicionar() {
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
   const f = document.createElement('div'); f.className = 'fundo';
   f.innerHTML = `<div class="folha" role="menu" aria-label="Adicionar leitura">
     <button class="opcao" id="op-ler" role="menuitem"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span><span><b>Ler o aparelho</b><small>Aponte a câmera para o visor</small></span></button>
     <button class="opcao" id="op-digitar" role="menuitem"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></span><span><b>Digitar os valores</b><small>Informe sistólica, diastólica e pulso</small></span></button>
+    <button class="opcao" id="op-foto" role="menuitem"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg></span><span><b>Ler de uma foto da galeria</b><small>Use uma foto já tirada do visor</small></span></button>
   </div>`;
   f.onclick = (ev) => {
     const b = ev.target.closest('button');
     if (ev.target === f || b) f.remove();
     if (b && b.id === 'op-ler') Camera.abrir();
     else if (b && b.id === 'op-digitar') Conferir.nova({ values: null, source: 'manual' });
+    else if (b && b.id === 'op-foto') $('#in-foto').click();
   };
   $('#camada').appendChild(f);
   f.querySelector('button').focus();
