@@ -246,6 +246,10 @@ button { cursor: pointer; }
 .form-pessoa .segmentos button[aria-checked="true"] { background: var(--branco); color: var(--tinta); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 .pf-dupla { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .pf-intro { margin: 0; color: var(--tinta-2); }
+.pf-importar { display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: center; text-align: left; border: 1.5px dashed #B9C0DA; background: #F3F4FB; border-radius: 14px; padding: 12px 14px; color: var(--tinta); }
+.pf-importar svg { width: 26px; height: 26px; color: var(--start); }
+.pf-importar b { display: block; }
+.pf-importar small { color: var(--tinta-2); font-size: 0.88rem; }
 .pf-imc { margin: -6px 0 0; color: var(--tinta-2); font-weight: 600; min-height: 1.2em; }
 .opc { font-weight: 400; color: var(--tinta-2); }
 
@@ -444,6 +448,9 @@ button { cursor: pointer; }
   </header>
   <div class="painel form-pessoa">
     <p class="pf-intro" id="pf-intro" hidden></p>
+    <button class="pf-importar" id="pf-importar" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg>
+      <span><b>Trocou de celular?</b><small>Importe o backup (arquivo .json) e continue de onde parou, sem cadastrar de novo.</small></span></button>
     <div class="campo" id="pf-c-nome"><label for="pf-nome">Nome</label><input id="pf-nome" type="text" maxlength="30" autocomplete="off"><div class="msg-erro" hidden></div></div>
     <div class="campo" id="pf-c-sexo"><label id="pf-sexo-rot">Sexo</label>
       <div class="segmentos" id="pf-sexo" role="radiogroup" aria-labelledby="pf-sexo-rot"><button type="button" role="radio" data-sexo="F" aria-checked="false">Feminino</button><button type="button" role="radio" data-sexo="M" aria-checked="false">Masculino</button></div>

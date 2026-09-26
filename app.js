@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.6.2';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -232,17 +232,20 @@ function renderInicio() {
   $('#lista').innerHTML = html;
 }
 function graficoSVG(s) {
-  const W = 320, H = 150, L = 30, R = 8, T = 10, B = 22;
+  const W = 320, H = 176, L = 30, R = 12, T = 14, B = 24;
   let lo = Math.min(...s.map((r) => r.dia)), hi = Math.max(...s.map((r) => r.sys));
-  lo = Math.floor((lo - 8) / 10) * 10; hi = Math.ceil((hi + 8) / 10) * 10;
-  const X = (i) => L + (i * (W - L - R)) / (s.length - 1), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
+  lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
+  const X = (i) => L + 8 + (i * (W - L - R - 16)) / (s.length - 1), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
+  const esp = (W - L - R - 16) / Math.max(1, s.length - 1);
+  const r = Math.max(6.5, Math.min(10, esp * 0.46)), fs = r >= 8.5 ? 9 : 7.5;
   let g = '';
   const passo = hi - lo > 80 ? 40 : 20;
   for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E3E7E1"/><text x="${L - 6}" y="${Y(v) + 4}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`;
-  const linha = (k, cor) => `<polyline fill="none" stroke="${cor}" stroke-width="2.4" stroke-linejoin="round" points="${s.map((r, i) => `${X(i).toFixed(1)},${Y(r[k]).toFixed(1)}`).join(' ')}"/>` + s.map((r, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(r[k]).toFixed(1)}" r="3" fill="${cor}"/>`).join('');
+  const linha = (k, cor, cls) => `<polyline fill="none" stroke="${cor}" stroke-width="2.2" stroke-linejoin="round" points="${s.map((x, i) => `${X(i).toFixed(1)},${Y(x[k]).toFixed(1)}`).join(' ')}"/>` +
+    s.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x[k]).toFixed(1)}" r="${r.toFixed(1)}" fill="${cor}" stroke="#fff" stroke-width="1.5"/><text class="${cls}" x="${X(i).toFixed(1)}" y="${(Y(x[k]) + fs * 0.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#fff">${Math.floor(x[k] / 10)}</text>`).join('');
   const d0 = new Date(s[0].ts), d1 = new Date(s[s.length - 1].ts);
-  g += `<text x="${L}" y="${H - 6}" font-size="10" fill="#6B757D">${d0.getDate()}/${d0.getMonth() + 1}</text><text x="${W - R}" y="${H - 6}" font-size="10" text-anchor="end" fill="#6B757D">${d1.getDate()}/${d1.getMonth() + 1}</text>`;
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico das últimas ${s.length} leituras">${g}${linha('sys', 'var(--sys)')}${linha('dia', 'var(--dia)')}</svg>`;
+  g += `<text x="${L + 8}" y="${H - 6}" font-size="10" fill="#6B757D">${d0.getDate()}/${d0.getMonth() + 1}</text><text x="${W - R - 8}" y="${H - 6}" font-size="10" text-anchor="end" fill="#6B757D">${d1.getDate()}/${d1.getMonth() + 1}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico das últimas ${s.length} leituras">${g}${linha('sys', 'var(--sys)', 'mini-sys')}${linha('dia', 'var(--dia)', 'mini-dia')}</svg>`;
 }
 
 // ====================== navegação ======================
@@ -563,6 +566,7 @@ const Perfil = (() => {
     $('#pf-intro').hidden = modo !== 'primeiro';
     $('#pf-intro').innerHTML = `Cadastre a primeira pessoa. Depois você pode adicionar até ${MAX_PERFIS} pessoas e alternar pelo nome no topo.` + (orfas ? `<br><b>${plural(orfas, 'leitura já salva', 'leituras já salvas')} neste aparelho ${orfas === 1 ? 'será associada' : 'serão associadas'} a esta pessoa.</b>` : '');
     $('#btn-pf-voltar').hidden = modo === 'primeiro';
+    $('#pf-importar').hidden = modo !== 'primeiro';
     f.nome().value = perfil ? perfil.nome : '';
     f.nasc().value = perfil && perfil.nascimento ? perfil.nascimento : '';
     f.peso().value = perfil && perfil.peso ? String(perfil.peso).replace('.', ',') : '';
@@ -652,6 +656,7 @@ const Perfil = (() => {
   $('#btn-pf-salvar').onclick = salvar;
   $('#btn-pf-excluir').onclick = excluir;
   $('#btn-pf-voltar').onclick = () => voltarInicio();
+  $('#pf-importar').onclick = () => $('#in-backup').click();
   return { primeiro: (orfas) => abrirForm('primeiro', null, orfas), abrirFolha, emOnboarding: () => ctx && ctx.modo === 'primeiro' && !perfis.length };
 })();
 
@@ -757,8 +762,11 @@ async function importar(file) {
     if (psAtuais.length + perfisNovos.length > MAX_PERFIS) throw new Error(`O backup traria ${perfisNovos.length} pessoas novas e passaria do limite de ${MAX_PERFIS}. Nada foi importado.`);
     perfisNovos.forEach((p) => idsPerfil.add(p.id));
     const validos = lista.filter(validarRegistro), invalidos = lista.length - validos.length;
+    // quem recebe leituras sem pessoa: a atual; no primeiro acesso, a primeira pessoa do backup;
+    // se não houver nenhuma pessoa, ficam sem dono e são associadas à pessoa cadastrada em seguida
+    const destino = perfilAtual || (perfisNovos[0] && perfisNovos[0].id) || null;
     let semDono = 0;
-    const ajustados = validos.map((r) => { if (!r.profileId || !idsPerfil.has(r.profileId)) { semDono++; return { ...r, profileId: perfilAtual }; } return r; });
+    const ajustados = validos.map((r) => { if (!r.profileId || !idsPerfil.has(r.profileId)) { semDono++; const c = { ...r }; if (destino) c.profileId = destino; else delete c.profileId; return c; } return r; });
     const atuais = new Map(lsAtuais.map((r) => [r.id, r]));
     const gravar = []; let novos = 0, atualizados = 0, iguais = 0;
     for (const r of ajustados) {
@@ -767,10 +775,10 @@ async function importar(file) {
       else if ((r.updatedAt || 0) > (a.updatedAt || 0)) { gravar.push(r); atualizados++; }
       else iguais++;
     }
-    const nomeAtual = (perfilDe(perfilAtual) || { nome: '' }).nome;
+    const nomeAtual = (perfilDe(destino) || perfisNovos.find((p) => p.id === destino) || { nome: '' }).nome;
     const partes = [`${plural(novos, 'leitura nova', 'leituras novas')}, ${plural(atualizados, 'atualizada', 'atualizadas')}, ${plural(iguais, 'já existente', 'já existentes')}`];
     if (perfisNovos.length) partes.push(`${plural(perfisNovos.length, 'pessoa nova', 'pessoas novas')}: ${perfisNovos.map((p) => p.nome).join(', ')}`);
-    if (semDono) partes.push(`${plural(semDono, 'leitura sem pessoa definida vai', 'leituras sem pessoa definida vão')} para ${nomeAtual}`);
+    if (semDono) partes.push(destino ? `${plural(semDono, 'leitura sem pessoa definida vai', 'leituras sem pessoa definida vão')} para ${nomeAtual}` : `${plural(semDono, 'leitura será associada', 'leituras serão associadas')} à pessoa que você cadastrar em seguida`);
     if (invalidos) partes.push(`${plural(invalidos, 'ignorada', 'ignoradas')} por estar incompleta`);
     const ok = await dialog({ title: 'Importar backup?', text: partes.join('. ') + '. Nenhuma leitura atual será apagada.', buttons: [{ label: 'Cancelar', value: false }, { label: 'Importar', value: true, cls: 'btn-start' }] });
     if (!ok) return;
@@ -779,7 +787,11 @@ async function importar(file) {
     const idsL = new Set(lsDepois.map((r) => r.id)), idsP = new Set(psDepois.map((p) => p.id));
     const faltando = gravar.filter((r) => !idsL.has(r.id)).length + perfisNovos.filter((p) => !idsP.has(p.id)).length;
     if (faltando) throw new Error(`${faltando} itens não foram gravados.`);
-    toast(gravar.length || perfisNovos.length ? plural(gravar.length, 'leitura importada', 'leituras importadas') : 'Nada novo para importar'); await carregar();
+    if (!perfilAtual && perfisNovos.length) { perfilAtual = perfisNovos[0].id; salvarPerfilAtual(perfilAtual); }
+    const vinhaDoCadastro = telaAtual === 'perfil' && !psAtuais.length;
+    toast(gravar.length || perfisNovos.length ? plural(gravar.length, 'leitura importada', 'leituras importadas') + (perfisNovos.length ? ` · ${plural(perfisNovos.length, 'pessoa', 'pessoas')}` : '') : 'Nada novo para importar');
+    if (vinhaDoCadastro && perfisNovos.length) mostrar('inicio', false);
+    await carregar();
   } catch (e) {
     await dialog({ title: 'O backup não foi importado', text: 'Suas leituras atuais não foram alteradas.', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
   } finally { $('#in-backup').value = ''; }
