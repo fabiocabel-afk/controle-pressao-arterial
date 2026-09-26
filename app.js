@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.6.3';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -1189,6 +1189,9 @@ const Painel = (() => {
   function abrirCalendario() {
     const doFiltro = registros.filter(passaFiltro);
     const diasCom = new Set(doFiltro.map((r) => chaveDia(r.ts)));
+    // dias com alguma leitura fora da faixa de referência da pessoa ficam alaranjados
+    const fx = faixaDe(perfilDe(perfilAtual));
+    const diasFora = new Set(doFiltro.filter((r) => foraDaFaixa(r, fx)).map((r) => chaveDia(r.ts)));
     if (!diasCom.size) { toast('Ainda não há leituras registradas'); return; }
     const mesesCom = [...new Set(doFiltro.map((r) => { const d = new Date(r.ts); return d.getFullYear() * 12 + d.getMonth(); }))].sort((a, b) => a - b);
     const a0 = new Date(st.ancora); let mes = a0.getFullYear() * 12 + a0.getMonth();
@@ -1202,9 +1205,9 @@ const Painel = (() => {
       let cel = '';
       for (let i = 0; i < primeiro.getDay(); i++) cel += '<span></span>';
       for (let d = 1; d <= nDias; d++) {
-        const t = new Date(ano, m, d, 12).getTime(), k = chaveDia(t), tem = diasCom.has(k);
+        const t = new Date(ano, m, d, 12).getTime(), k = chaveDia(t), tem = diasCom.has(k), fora = tem && diasFora.has(k);
         const noPeriodo = t >= j.ini && t < j.fim;
-        cel += `<button class="cal-dia${tem ? ' tem' : ''}${noPeriodo ? ' atual' : ''}" data-t="${t}" ${tem ? '' : 'aria-disabled="true"'} aria-label="${d} de ${MESES_LONGOS[m]}${tem ? '' : ', sem leituras'}">${d}</button>`;
+        cel += `<button class="cal-dia${tem ? ' tem' : ''}${fora ? ' fora' : ''}${noPeriodo ? ' atual' : ''}" data-t="${t}" ${tem ? '' : 'aria-disabled="true"'} aria-label="${d} de ${MESES_LONGOS[m]}${tem ? (fora ? ', com leitura fora da faixa' : ', leituras dentro da faixa') : ', sem leituras'}">${d}</button>`;
       }
       f.innerHTML = `<div class="dialogo calendario" role="dialog" aria-modal="true" aria-label="Escolher data">
         <div class="cal-topo">
@@ -1214,7 +1217,8 @@ const Painel = (() => {
         </div>
         <div class="cal-sem">${['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((x) => `<span>${x}</span>`).join('')}</div>
         <div class="cal-grade">${cel}</div>
-        <p class="cal-legenda"><i></i>dias com leitura</p>
+        <p class="cal-legenda"><span><i></i>dentro da faixa</span><span><i class="fora"></i>alguma leitura fora da faixa</span></p>
+        <p class="cal-faixa">Faixa: ${esc(faixaTexto(fx))}</p>
         <div class="botoes"><button class="btn btn-sec" data-cal="fechar">Fechar</button></div>
       </div>`;
     };

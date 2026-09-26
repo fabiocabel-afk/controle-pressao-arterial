@@ -206,8 +206,13 @@ button { cursor: pointer; }
 .cal-dia { border: 0; background: transparent; aspect-ratio: 1; border-radius: 50%; color: #B4BCC1; font-variant-numeric: tabular-nums; }
 .cal-dia.tem { color: var(--branco); background: var(--start); font-weight: 700; }
 .cal-dia.tem:hover { background: var(--start-2); }
+.cal-dia.tem.fora { background: #E07A2C; }
+.cal-dia.tem.fora:hover { background: #C8661C; }
 .cal-dia.atual { box-shadow: 0 0 0 2px var(--ambar); }
-.cal-legenda { font-size: 0.85rem; color: var(--tinta-2); margin: 10px 0 0; }
+.cal-dia.tem.fora.atual { box-shadow: 0 0 0 2px var(--tinta); }
+.cal-legenda { font-size: 0.85rem; color: var(--tinta-2); margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.cal-legenda i.fora { background: #E07A2C; }
+.cal-faixa { font-size: 0.82rem; color: #6E5A0E; margin: 4px 0 0; }
 .cal-legenda i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--start); margin-right: 6px; vertical-align: -1px; }
 .pn-grafico .alvo { cursor: pointer; }
 .pn-lista { padding: 4px 18px 40px; }
