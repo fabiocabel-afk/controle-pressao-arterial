@@ -255,6 +255,10 @@ button { cursor: pointer; }
 .pf-importar svg { width: 26px; height: 26px; color: var(--start); }
 .pf-importar b { display: block; }
 .pf-importar small { color: var(--tinta-2); font-size: 0.88rem; }
+.pf-juntar { border: 1px solid var(--linha); background: var(--branco); border-radius: 12px; padding: 12px; font-weight: 600; color: var(--start); }
+.destinos .dst-linha { padding: 10px 0; border-top: 1px solid var(--linha); }
+.destinos .dst-linha b { display: block; } .destinos .dst-linha small { display: block; color: var(--tinta-2); margin-bottom: 6px; }
+.destinos select, #jn-alvo { width: 100%; padding: 11px; border-radius: 12px; border: 1.5px solid var(--linha); background: var(--branco); font: inherit; }
 .pf-imc { margin: -6px 0 0; color: var(--tinta-2); font-weight: 600; min-height: 1.2em; }
 .opc { font-weight: 400; color: var(--tinta-2); }
 
@@ -466,6 +470,7 @@ button { cursor: pointer; }
       <div class="campo" id="pf-c-alt"><label for="pf-alt">Altura <span class="opc">(cm)</span></label><input id="pf-alt" type="text" inputmode="numeric" maxlength="3" placeholder="Ex.: 168"><div class="msg-erro" hidden></div></div>
     </div>
     <p class="pf-imc" id="pf-imc" aria-live="polite"></p>
+    <button class="pf-juntar" id="btn-pf-juntar" hidden>Juntar com outra pessoa (cadastro repetido)</button>
   </div>
   <div class="acoes">
     <button class="btn btn-perigo" id="btn-pf-excluir" hidden>Excluir pessoa</button>

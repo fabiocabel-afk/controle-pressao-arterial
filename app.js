@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.6.3';
+const APP_VERSION = '1.6.4';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -95,6 +95,10 @@ const DB = (() => {
     delPerfil: (id) => tx(['perfis', 'leituras'], 'readwrite', (st, set) => {
       st('perfis').delete(id);
       return req(st('leituras').getAll()).then((ls) => { let n = 0; for (const r of ls) if (r.profileId === id) { st('leituras').delete(r.id); n++; } set(n); });
+    }),
+    // move todas as leituras de uma pessoa para outra e remove a primeira (tudo ou nada)
+    juntarPerfis: (origem, destino) => tx(['perfis', 'leituras'], 'readwrite', (st, set) => {
+      return req(st('leituras').getAll()).then((ls) => { let n = 0; for (const r of ls) if (r.profileId === origem) { r.profileId = destino; r.updatedAt = Date.now(); st('leituras').put(r); n++; } st('perfis').delete(origem); set(n); });
     }),
     importar: (perfis, leituras) => tx(['perfis', 'leituras'], 'readwrite', (st) => { for (const p of perfis) st('perfis').put(p); for (const r of leituras) st('leituras').put(r); }),
   };
@@ -574,6 +578,7 @@ const Perfil = (() => {
     marcarSexo(perfil ? perfil.sexo || '' : '');
     imc();
     $('#btn-pf-excluir').hidden = !(modo === 'editar' && perfis.length > 1);
+    $('#btn-pf-juntar').hidden = !(modo === 'editar' && perfis.length > 1);
     mostrar('perfil', telaAtual === 'inicio');
     if (modo !== 'editar') setTimeout(() => f.nome().focus(), 50);
   }
@@ -627,6 +632,26 @@ const Perfil = (() => {
       await dialog({ title: 'Não foi possível excluir', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
     }
   }
+  async function juntar() {
+    const p = ctx.perfil, outros = perfis.filter((x) => x.id !== p.id), n = todas.filter((r) => r.profileId === p.id).length;
+    const f = document.createElement('div'); f.className = 'fundo';
+    f.innerHTML = `<div class="dialogo" role="dialog" aria-modal="true" aria-labelledby="jn-t"><h3 id="jn-t">Juntar ${esc(p.nome)} com outra pessoa</h3>
+      <p>Use quando a mesma pessoa ficou cadastrada duas vezes. ${plural(n, 'A leitura', 'As ' + n + ' leituras')} de ${esc(p.nome)} ${n === 1 ? 'passa' : 'passam'} para a pessoa escolhida, e ${esc(p.nome)} sai da lista.</p>
+      <select id="jn-alvo" aria-label="Juntar com">${outros.map((o) => `<option value="${esc(o.id)}"${(sugerirJuncao(p, outros) || {}).id === o.id ? ' selected' : ''}>${esc(o.nome)} (${plural(todas.filter((r) => r.profileId === o.id).length, 'leitura', 'leituras')})</option>`).join('')}</select>
+      <div class="botoes"><button class="btn btn-sec" data-j="cancelar">Cancelar</button><button class="btn btn-start" data-j="ok">Juntar</button></div></div>`;
+    const alvo = await new Promise((resolve) => { f.onclick = (ev) => { const b = ev.target.closest('[data-j]'); if (!b) return; const v = f.querySelector('#jn-alvo').value; f.remove(); resolve(b.dataset.j === 'ok' ? v : null); }; $('#camada').appendChild(f); f.querySelector('#jn-alvo').focus(); });
+    if (!alvo) return;
+    try {
+      const esperado = n + todas.filter((r) => r.profileId === alvo).length;
+      await DB.juntarPerfis(p.id, alvo);
+      const [ps, ls] = await Promise.all([DB.perfis(), DB.all()]);
+      if (ps.some((x) => x.id === p.id) || ls.some((r) => r.profileId === p.id) || ls.filter((r) => r.profileId === alvo).length !== esperado) throw new Error('A junção não foi concluída.');
+      perfilAtual = alvo; salvarPerfilAtual(alvo);
+      toast(`${plural(n, 'leitura passou', 'leituras passaram')} para ${perfilDe(alvo).nome}`); voltarInicio(); await carregar();
+    } catch (e) {
+      await dialog({ title: 'Não foi possível juntar', text: 'Nenhuma leitura foi perdida.', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
+    }
+  }
   function trocar(id) { perfilAtual = id; salvarPerfilAtual(id); registros = todas.filter((r) => r.profileId === id); renderTopo(); renderInicio(); if (telaAtual === 'painel') Painel.abrir(true); toast(`Mostrando ${perfilDe(id).nome}`); }
   function abrirFolha() {
     document.querySelectorAll('.toast').forEach((t) => t.remove());
@@ -655,6 +680,7 @@ const Perfil = (() => {
   $('#pf-peso').addEventListener('input', imc); $('#pf-alt').addEventListener('input', imc);
   $('#btn-pf-salvar').onclick = salvar;
   $('#btn-pf-excluir').onclick = excluir;
+  $('#btn-pf-juntar').onclick = juntar;
   $('#btn-pf-voltar').onclick = () => voltarInicio();
   $('#pf-importar').onclick = () => $('#in-backup').click();
   return { primeiro: (orfas) => abrirForm('primeiro', null, orfas), abrirFolha, emOnboarding: () => ctx && ctx.modo === 'primeiro' && !perfis.length };
@@ -749,6 +775,35 @@ function validarRegistro(r) {
   return r && typeof r.id === 'string' && r.id && Number.isFinite(r.ts) && int(r.sys, 50, 280) && int(r.dia, 30, 200) && int(r.pulse, 30, 240) && r.dia < r.sys;
 }
 const validarPerfil = (p) => p && typeof p.id === 'string' && p.id && typeof p.nome === 'string' && p.nome.trim();
+// nome sem acentos e em minúsculas, para comparar
+const normNome = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+// sugere juntar quando o nome é igual ou o primeiro nome coincide (ex.: "Fabio" e "Fabio dos Santos Silva")
+function sugerirJuncao(pNovo, locais) {
+  const n = normNome(pNovo.nome), pn = n.split(' ')[0];
+  return locais.find((l) => normNome(l.nome) === n) || locais.find((l) => normNome(l.nome).split(' ')[0] === pn) || null;
+}
+// pergunta, para cada pessoa do backup, se entra como nova ou se junta com alguém que já está no aparelho
+function escolherDestinos(novos, locais, contagem) {
+  return new Promise((resolve) => {
+    const f = document.createElement('div'); f.className = 'fundo';
+    f.innerHTML = `<div class="dialogo destinos" role="dialog" aria-modal="true" aria-labelledby="dst-t">
+      <h3 id="dst-t">Pessoas do backup</h3>
+      <p>Diga para quem vão as leituras de cada pessoa do backup.</p>
+      ${novos.map((p) => { const sug = sugerirJuncao(p, locais); return `<div class="dst-linha"><b>${esc(p.nome)}</b><small>${plural(contagem[p.id] || 0, 'leitura', 'leituras')} no backup</small>
+        <select data-novo="${esc(p.id)}" aria-label="Destino das leituras de ${esc(p.nome)}">
+          <option value="">Adicionar como nova pessoa</option>
+          ${locais.map((l) => `<option value="${esc(l.id)}"${sug && sug.id === l.id ? ' selected' : ''}>Juntar com ${esc(l.nome)}</option>`).join('')}
+        </select></div>`; }).join('')}
+      <div class="botoes"><button class="btn btn-sec" data-d="cancelar">Cancelar</button><button class="btn btn-start" data-d="ok">Continuar</button></div></div>`;
+    f.onclick = (ev) => {
+      const b = ev.target.closest('[data-d]'); if (!b) return;
+      const mapa = {}; f.querySelectorAll('select[data-novo]').forEach((s) => { mapa[s.dataset.novo] = s.value || null; });
+      f.remove(); resolve(b.dataset.d === 'ok' ? mapa : null);
+    };
+    $('#camada').appendChild(f);
+    f.querySelector('select').focus();
+  });
+}
 async function importar(file) {
   if (!file) return;
   try {
@@ -757,16 +812,37 @@ async function importar(file) {
     if (!Array.isArray(lista)) throw new Error('O arquivo não é um backup deste app.');
     const perfisArq = (dados && Array.isArray(dados.perfis) ? dados.perfis : []).filter(validarPerfil);
     const [psAtuais, lsAtuais] = await Promise.all([DB.perfis(), DB.all()]);
-    const idsPerfil = new Set(psAtuais.map((p) => p.id));
-    const perfisNovos = perfisArq.filter((p) => !idsPerfil.has(p.id)).map((p) => ({ ...p, nome: p.nome.trim().slice(0, 30), cor: Number.isInteger(p.cor) ? p.cor : 0, createdAt: p.createdAt || Date.now(), updatedAt: p.updatedAt || Date.now() }));
-    if (psAtuais.length + perfisNovos.length > MAX_PERFIS) throw new Error(`O backup traria ${perfisNovos.length} pessoas novas e passaria do limite de ${MAX_PERFIS}. Nada foi importado.`);
-    perfisNovos.forEach((p) => idsPerfil.add(p.id));
+    const idsLocais = new Set(psAtuais.map((p) => p.id));
     const validos = lista.filter(validarRegistro), invalidos = lista.length - validos.length;
+    let perfisNovos = perfisArq.filter((p) => !idsLocais.has(p.id)).map((p) => ({ ...p, nome: p.nome.trim().slice(0, 30), cor: Number.isInteger(p.cor) ? p.cor : 0, createdAt: p.createdAt || Date.now(), updatedAt: p.updatedAt || Date.now() }));
+    // já existe gente no aparelho: perguntar se as pessoas do backup são novas ou as mesmas
+    const mapa = {}; // id do backup -> id local (juntar)
+    const complementados = [];
+    if (perfisNovos.length && psAtuais.length) {
+      const contagem = {}; for (const r of validos) contagem[r.profileId] = (contagem[r.profileId] || 0) + 1;
+      const escolha = await escolherDestinos(perfisNovos, psAtuais, contagem);
+      if (!escolha) return;
+      for (const p of perfisNovos) if (escolha[p.id]) mapa[p.id] = escolha[p.id];
+      // a pessoa local ganha os dados que ainda não tinha (peso, altura, nascimento, sexo, faixa)
+      for (const [idArq, idLocal] of Object.entries(mapa)) {
+        const doArq = perfisNovos.find((p) => p.id === idArq), local = { ...(complementados.find((c) => c.id === idLocal) || psAtuais.find((p) => p.id === idLocal)) };
+        let mudou = false;
+        for (const k of ['sexo', 'peso', 'altura', 'nascimento', 'parametro']) if ((local[k] == null || local[k] === '') && doArq[k] != null) { local[k] = doArq[k]; mudou = true; }
+        if (mudou) { local.updatedAt = Date.now(); const i = complementados.findIndex((c) => c.id === idLocal); if (i >= 0) complementados[i] = local; else complementados.push(local); }
+      }
+      perfisNovos = perfisNovos.filter((p) => !mapa[p.id]);
+    }
+    if (psAtuais.length + perfisNovos.length > MAX_PERFIS) throw new Error(`O backup traria ${perfisNovos.length} pessoas novas e passaria do limite de ${MAX_PERFIS}. Nada foi importado.`);
+    const idsValidos = new Set([...idsLocais, ...perfisNovos.map((p) => p.id)]);
     // quem recebe leituras sem pessoa: a atual; no primeiro acesso, a primeira pessoa do backup;
     // se não houver nenhuma pessoa, ficam sem dono e são associadas à pessoa cadastrada em seguida
     const destino = perfilAtual || (perfisNovos[0] && perfisNovos[0].id) || null;
     let semDono = 0;
-    const ajustados = validos.map((r) => { if (!r.profileId || !idsPerfil.has(r.profileId)) { semDono++; const c = { ...r }; if (destino) c.profileId = destino; else delete c.profileId; return c; } return r; });
+    const ajustados = validos.map((r) => {
+      if (r.profileId && mapa[r.profileId]) return { ...r, profileId: mapa[r.profileId] };
+      if (!r.profileId || !idsValidos.has(r.profileId)) { semDono++; const c = { ...r }; if (destino) c.profileId = destino; else delete c.profileId; return c; }
+      return r;
+    });
     const atuais = new Map(lsAtuais.map((r) => [r.id, r]));
     const gravar = []; let novos = 0, atualizados = 0, iguais = 0;
     for (const r of ajustados) {
@@ -775,21 +851,31 @@ async function importar(file) {
       else if ((r.updatedAt || 0) > (a.updatedAt || 0)) { gravar.push(r); atualizados++; }
       else iguais++;
     }
-    const nomeAtual = (perfilDe(destino) || perfisNovos.find((p) => p.id === destino) || { nome: '' }).nome;
+    const nomeDe = (id) => (psAtuais.find((p) => p.id === id) || perfisNovos.find((p) => p.id === id) || { nome: '' }).nome;
     const partes = [`${plural(novos, 'leitura nova', 'leituras novas')}, ${plural(atualizados, 'atualizada', 'atualizadas')}, ${plural(iguais, 'já existente', 'já existentes')}`];
     if (perfisNovos.length) partes.push(`${plural(perfisNovos.length, 'pessoa nova', 'pessoas novas')}: ${perfisNovos.map((p) => p.nome).join(', ')}`);
-    if (semDono) partes.push(destino ? `${plural(semDono, 'leitura sem pessoa definida vai', 'leituras sem pessoa definida vão')} para ${nomeAtual}` : `${plural(semDono, 'leitura será associada', 'leituras serão associadas')} à pessoa que você cadastrar em seguida`);
+    const juncoes = Object.entries(mapa);
+    if (juncoes.length) partes.push(juncoes.map(([a, b]) => `${nomeDe(a) || perfisArq.find((p) => p.id === a).nome} → ${nomeDe(b)}`).join(', '));
+    if (semDono) partes.push(destino ? `${plural(semDono, 'leitura sem pessoa definida vai', 'leituras sem pessoa definida vão')} para ${nomeDe(destino)}` : `${plural(semDono, 'leitura será associada', 'leituras serão associadas')} à pessoa que você cadastrar em seguida`);
     if (invalidos) partes.push(`${plural(invalidos, 'ignorada', 'ignoradas')} por estar incompleta`);
     const ok = await dialog({ title: 'Importar backup?', text: partes.join('. ') + '. Nenhuma leitura atual será apagada.', buttons: [{ label: 'Cancelar', value: false }, { label: 'Importar', value: true, cls: 'btn-start' }] });
     if (!ok) return;
-    await DB.importar(perfisNovos, gravar);
+    await DB.importar(perfisNovos.concat(complementados), gravar);
     const [psDepois, lsDepois] = await Promise.all([DB.perfis(), DB.all()]);
-    const idsL = new Set(lsDepois.map((r) => r.id)), idsP = new Set(psDepois.map((p) => p.id));
-    const faltando = gravar.filter((r) => !idsL.has(r.id)).length + perfisNovos.filter((p) => !idsP.has(p.id)).length;
+    const porId = new Map(lsDepois.map((r) => [r.id, r])), idsP = new Set(psDepois.map((p) => p.id));
+    const faltando = gravar.filter((r) => !porId.has(r.id) || porId.get(r.id).profileId !== r.profileId).length + perfisNovos.filter((p) => !idsP.has(p.id)).length;
     if (faltando) throw new Error(`${faltando} itens não foram gravados.`);
+    // mostrar quem recebeu as leituras: se a pessoa atual não recebeu nada, troca para quem recebeu mais
+    const recebidas = {}; for (const r of gravar) if (r.profileId) recebidas[r.profileId] = (recebidas[r.profileId] || 0) + 1;
+    let trocouPara = null;
     if (!perfilAtual && perfisNovos.length) { perfilAtual = perfisNovos[0].id; salvarPerfilAtual(perfilAtual); }
+    else if (perfilAtual && !recebidas[perfilAtual] && Object.keys(recebidas).length) {
+      const [maior] = Object.entries(recebidas).sort((x, y) => y[1] - x[1]);
+      perfilAtual = maior[0]; salvarPerfilAtual(perfilAtual); trocouPara = psDepois.find((p) => p.id === perfilAtual);
+    }
     const vinhaDoCadastro = telaAtual === 'perfil' && !psAtuais.length;
-    toast(gravar.length || perfisNovos.length ? plural(gravar.length, 'leitura importada', 'leituras importadas') + (perfisNovos.length ? ` · ${plural(perfisNovos.length, 'pessoa', 'pessoas')}` : '') : 'Nada novo para importar');
+    const resumo = gravar.length || perfisNovos.length ? plural(gravar.length, 'leitura importada', 'leituras importadas') + (perfisNovos.length ? ` · ${plural(perfisNovos.length, 'pessoa nova', 'pessoas novas')}` : '') : 'Nada novo para importar';
+    toast(trocouPara ? `${resumo} · mostrando ${trocouPara.nome}` : resumo, 4000);
     if (vinhaDoCadastro && perfisNovos.length) mostrar('inicio', false);
     await carregar();
   } catch (e) {
