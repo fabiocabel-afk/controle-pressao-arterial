@@ -168,15 +168,18 @@ button { cursor: pointer; }
 .segmentos button[aria-selected="true"] { background: var(--branco); color: var(--tinta); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 .segmentos.pequeno button { padding: 6px 12px; font-size: 0.92rem; }
 .pn-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
-.pn-nav span { font-weight: 650; font-size: 1.05rem; }
+.pn-data { border: 0; background: transparent; font-weight: 650; font-size: 1.05rem; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; }
+.pn-data:hover { background: rgba(31, 42, 51, 0.06); }
+.pn-data svg { width: 18px; height: 18px; color: var(--tinta-2); }
 .pn-nav .icone:disabled { opacity: 0.25; cursor: default; }
 .pn-media { margin: 4px 0 6px; font-size: 0.85rem; color: var(--tinta-2); }
-.pn-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pn-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pn-resumo .card { background: var(--branco); border: 1px solid var(--linha); border-radius: 12px; padding: 9px 10px; }
-.pn-resumo .card span { display: block; font-size: 0.8rem; color: var(--tinta-2); }
+.pn-resumo .card > span { display: block; font-size: 0.8rem; color: var(--tinta-2); }
 .pn-resumo .card b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
 .pn-resumo .card em { display: block; font-style: normal; font-size: 0.82rem; margin-top: 1px; line-height: 1.25; }
-.pn-resumo .card em .delta.igual { font-weight: 500; }
+.pn-resumo .card em .delta.igual { font-weight: 500; white-space: normal; }
+.pn-resumo .card { min-width: 0; }
 .pn-resumo .card .vs { display: block; color: var(--tinta-2); font-size: 0.75rem; }
 .pn-fixo { position: sticky; top: 0; z-index: 5; background: var(--papel); padding: 10px 18px 6px; margin-top: 8px; border-bottom: 1px solid var(--linha); }
 .pn-barra { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
@@ -185,7 +188,25 @@ button { cursor: pointer; }
 .chip[aria-pressed="false"] { opacity: 0.55; }
 .chip[aria-pressed="false"] i { background: transparent; border: 2px solid #A36A2C; }
 .pn-grafico { margin-top: 8px; background: var(--branco); border: 1px solid var(--linha); border-radius: var(--raio); touch-action: pan-y; }
-.pn-grafico svg { display: block; width: 100%; height: auto; user-select: none; -webkit-user-select: none; }
+.pn-grafico svg { display: block; user-select: none; -webkit-user-select: none; }
+.gr-wrap { display: flex; }
+.gr-wrap .eixo { flex: 0 0 auto; }
+.gr-rolagem { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; -webkit-overflow-scrolling: touch; border-radius: 0 var(--raio) var(--raio) 0; }
+.gr-rolagem::-webkit-scrollbar { height: 6px; }
+.gr-rolagem::-webkit-scrollbar-thumb { background: #C9D0C8; border-radius: 3px; }
+/* calendário */
+.calendario { width: min(360px, calc(100vw - 36px)); }
+.cal-topo { display: flex; align-items: center; justify-content: space-between; }
+.cal-topo b { font-size: 1.05rem; }
+.cal-topo .icone:disabled { opacity: 0.25; }
+.cal-sem, .cal-grade { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+.cal-sem { margin: 8px 0 4px; font-size: 0.8rem; color: var(--tinta-2); font-weight: 600; }
+.cal-dia { border: 0; background: transparent; aspect-ratio: 1; border-radius: 50%; color: #B4BCC1; font-variant-numeric: tabular-nums; }
+.cal-dia.tem { color: var(--branco); background: var(--start); font-weight: 700; }
+.cal-dia.tem:hover { background: var(--start-2); }
+.cal-dia.atual { box-shadow: 0 0 0 2px var(--ambar); }
+.cal-legenda { font-size: 0.85rem; color: var(--tinta-2); margin: 10px 0 0; }
+.cal-legenda i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--start); margin-right: 6px; vertical-align: -1px; }
 .pn-grafico .alvo { cursor: pointer; }
 .pn-lista { padding: 4px 18px 40px; }
 .pn-lista .lista { margin-bottom: 4px; }
@@ -196,11 +217,11 @@ button { cursor: pointer; }
 .pn-item .valores { font-size: 1.15rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .pn-item .sub { display: block; font-size: 0.82rem; color: var(--tinta-2); font-weight: 400; }
 .pn-item .dir { text-align: right; color: var(--tinta-2); font-variant-numeric: tabular-nums; }
-.delta { display: inline-flex; align-items: baseline; gap: 2px; font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 8px; }
+.delta { display: inline-block; white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 8px; }
 .delta.sobe { color: var(--sobe); }
 .delta.desce { color: var(--desce); }
 .delta.igual { color: var(--tinta-2); }
-.delta .seta { font-size: 0.8em; }
+.delta .seta { font-size: 0.8em; margin-right: 2px; }
 .pn-vazio { text-align: center; color: var(--tinta-2); padding: 30px 10px; }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -263,7 +284,7 @@ button { cursor: pointer; }
     </div>
     <div class="pn-nav">
       <button class="icone" id="pn-ant" aria-label="Período anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
-      <span id="pn-rotulo" aria-live="polite"></span>
+      <button class="pn-data" id="pn-rotulo" aria-label="Escolher data no calendário"><span id="pn-rotulo-txt" aria-live="polite"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
       <button class="icone" id="pn-prox" aria-label="Próximo período"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
     </div>
     <div class="pn-resumo" id="pn-resumo"></div>

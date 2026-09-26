@@ -1,5 +1,5 @@
 // Service worker: funciona offline. Troque a versão a cada entrega.
-const CACHE = 'pressao-v1.2.0';
+const CACHE = 'pressao-v1.3.0';
 const ARQUIVOS = ['./', 'index.html', 'app.js', 'engine.js', 'worker.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));

@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -508,11 +508,6 @@ const Painel = (() => {
     if (periodo === 'semana') { const f = addDias(inicioDia(ancora), 1); return { ini: addDias(f, -7), fim: f }; }
     const d = new Date(ancora); return { ini: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), fim: new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() };
   }
-  function mover(periodo, ancora, n) {
-    if (periodo === 'dia') return addDias(ancora, n);
-    if (periodo === 'semana') return addDias(ancora, 7 * n);
-    const d = new Date(ancora); return new Date(d.getFullYear(), d.getMonth() + n, 1, 12).getTime();
-  }
   function rotulo(periodo, j) {
     const a = new Date(j.ini), b = new Date(j.fim - 1);
     if (periodo === 'dia') return fmtDia(j.ini);
@@ -557,68 +552,102 @@ const Painel = (() => {
     return `<p class="pn-media">Médias de ${plural(noPeriodo.length, 'leitura', 'leituras')}</p><div class="pn-cards">` + card('Sistólica', 'sys') + card('Diastólica', 'dia') + card('Pulso', 'pulse') + '</div>';
   }
   // ---------- gráfico ----------
+  // Eixo X por "casas": cada leitura (ou média diária no mês) ocupa uma casa larga; dias sem leitura viram casas estreitas.
+  // Se não couber na largura da tela, o gráfico rola na horizontal.
+  const AX = 36, GH = 250, GT = 34, GB = 30;
+  function casas(itens, j) {
+    const cs = [];
+    const porDia = new Map();
+    for (const it of itens) { const k = chaveDia(it.ts); if (!porDia.has(k)) porDia.set(k, []); porDia.get(k).push(it); }
+    if (st.periodo === 'dia') {
+      for (const it of itens) cs.push({ it, w: 56, rot: fmtHora(it.ts), grupo: null });
+    } else {
+      for (let t = j.ini; t < j.fim; t = addDias(t, 1)) {
+        const d = new Date(t), k = chaveDia(t), lst = porDia.get(k) || [];
+        const rot = st.periodo === 'semana' && lst.length ? `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}` : String(d.getDate());
+        if (!lst.length) cs.push({ it: null, w: st.periodo === 'semana' ? 26 : 16, rot, grupo: k, dia: t });
+        else lst.forEach((it) => cs.push({ it, w: st.periodo === 'semana' ? 50 : 42, rot, grupo: k, dia: t }));
+      }
+    }
+    return cs;
+  }
+  const abrev = (v) => String(Math.floor(v / 10)); // 145 -> 14, 94 -> 9 (como se fala: "14 por 9")
   function grafico(itens, j) {
     const box = $('#pn-grafico');
-    const W = Math.max(300, Math.round(box.clientWidth || 340)), H = 230, L = 34, R = 12, T = 30, B = 26;
-    const pw = W - L - R, ph = H - T - B;
-    const X = (ts) => L + ((ts - j.ini) / (j.fim - j.ini)) * pw;
-    let g = '';
-    // eixo x
-    const marcas = [];
-    if (st.periodo === 'dia') for (let h = 0; h <= 24; h += 6) marcas.push([j.ini + h * 3600000, `${h}h`]);
-    else if (st.periodo === 'semana') for (let k = 0; k < 7; k++) { const t = addDias(j.ini, k); const d = new Date(t); marcas.push([t + DIA_MS / 2, `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}`]); }
-    else for (const dd of [1, 8, 15, 22, 29]) { const t = addDias(j.ini, dd - 1); if (t < j.fim) marcas.push([t + DIA_MS / 2, String(dd)]); }
-    if (st.periodo === 'semana') for (let k = 1; k < 7; k++) { const x = X(addDias(j.ini, k)); g += `<line x1="${x}" x2="${x}" y1="${T}" y2="${T + ph}" stroke="#EEF1EC"/>`; }
-    for (const [t, txt] of marcas) g += `<text x="${X(t).toFixed(1)}" y="${H - 8}" font-size="10.5" text-anchor="middle" fill="#6B757D">${txt}</text>`;
-    if (!itens.length) {
-      g += `<text x="${W / 2}" y="${T + ph / 2}" text-anchor="middle" font-size="13" fill="#6B757D">Nenhuma leitura neste período</text>`;
-      return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico vazio">${g}</svg>`;
+    const disp = Math.max(260, (box.clientWidth || 340) - AX - 2);
+    const cs = casas(itens, j);
+    let total = cs.reduce((a, c) => a + c.w, 0) + 16;
+    const f = total < disp ? disp / total : 1;
+    cs.forEach((c) => { c.w *= f; });
+    total = Math.max(disp, Math.round(total * f));
+    let acc = 8 * f; cs.forEach((c) => { c.x = acc + c.w / 2; acc += c.w; });
+    const ph = GH - GT - GB;
+    let g = '', eixo = '', marcas = '', alvos = '';
+    // rótulos do eixo X e divisórias entre dias
+    if (st.periodo === 'dia') cs.forEach((c) => { g += `<text x="${c.x.toFixed(1)}" y="${GH - 9}" font-size="11" text-anchor="middle" fill="#6B757D">${c.rot}</text>`; });
+    else {
+      let i = 0;
+      while (i < cs.length) {
+        let k = i; while (k + 1 < cs.length && cs[k + 1].grupo === cs[i].grupo) k++;
+        const x0 = cs[i].x - cs[i].w / 2, x1 = cs[k].x + cs[k].w / 2, xm = (x0 + x1) / 2;
+        const temLeitura = cs.slice(i, k + 1).some((c) => c.it);
+        if (st.periodo === 'semana' || temLeitura || new Date(cs[i].dia).getDate() % 5 === 1)
+          g += `<text x="${xm.toFixed(1)}" y="${GH - 9}" font-size="${st.periodo === 'semana' ? 11 : 10.5}" text-anchor="middle" fill="${temLeitura ? '#3B4650' : '#A3ACB2'}" font-weight="${temLeitura ? 600 : 400}">${cs[i].rot}</text>`;
+        if (i > 0) g += `<line x1="${x0.toFixed(1)}" x2="${x0.toFixed(1)}" y1="${GT}" y2="${GT + ph}" stroke="#EDF0EB"/>`;
+        i = k + 1;
+      }
     }
-    const minGap = itens.length > 1 ? Math.min(...itens.slice(1).map((it, i) => X(it.ts) - X(itens[i].ts))) : pw;
-    const bw = Math.max(5, Math.min(14, minGap * 0.7, pw / itens.length * 0.6));
-    let alvos = '', marcas2 = '';
+    const comItem = cs.filter((c) => c.it);
+    const svgEixo = (conteudo) => `<svg class="eixo" viewBox="0 0 ${AX} ${GH}" width="${AX}" height="${GH}" aria-hidden="true">${conteudo}</svg>`;
+    if (!comItem.length) {
+      g += `<text x="${total / 2}" y="${GT + ph / 2}" text-anchor="middle" font-size="13" fill="#6B757D">Nenhuma leitura neste período</text>`;
+      return `<div class="gr-wrap">${svgEixo('')}<div class="gr-rolagem"><svg class="principal" viewBox="0 0 ${total} ${GH}" width="${total}" height="${GH}" role="img" aria-label="Gráfico vazio">${g}</svg></div></div>`;
+    }
+    const menorCasa = Math.min(...comItem.map((c) => c.w));
+    const bw = Math.max(16, Math.min(26, menorCasa * 0.5));
+    const raio = Math.max(12, bw / 2 + 2);
     if (st.modo === 'valores') {
       let lo = Math.min(...itens.map((it) => st.pulso ? Math.min(it.dia, it.pulse) : it.dia)), hi = Math.max(...itens.map((it) => st.pulso ? Math.max(it.sys, it.pulse) : it.sys));
-      lo = Math.floor((lo - 6) / 10) * 10; hi = Math.ceil((hi + 6) / 10) * 10;
-      const Y = (v) => T + ((hi - v) * ph) / (hi - lo);
+      lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
+      const Y = (v) => GT + ((hi - v) * ph) / (hi - lo);
       const passo = hi - lo > 100 ? 40 : 20;
-      for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E6EAE4"/><text x="${L - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`;
-      if (st.pulso && itens.length > 1) g += `<polyline fill="none" stroke="var(--pulso)" stroke-width="1.6" stroke-dasharray="3 3" points="${itens.map((it) => `${X(it.ts).toFixed(1)},${Y(it.pulse).toFixed(1)}`).join(' ')}"/>`;
-      for (const it of itens) {
-        const x = X(it.ts), ys = Y(it.sys), yd = Y(it.dia), sel = it.id === st.sel;
-        g += `<rect x="${(x - bw / 2).toFixed(1)}" y="${ys.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, yd - ys).toFixed(1)}" rx="${(bw / 2).toFixed(1)}" fill="${sel ? 'var(--ambar)' : 'rgba(46,50,114,0.22)'}"/>`;
-        g += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="${(bw / 2 + 1).toFixed(1)}" fill="var(--sys)" stroke="#fff" stroke-width="1.5"/><circle cx="${x.toFixed(1)}" cy="${yd.toFixed(1)}" r="${(bw / 2 + 1).toFixed(1)}" fill="var(--dia)" stroke="#fff" stroke-width="1.5"/>`;
-        if (st.pulso) g += `<rect x="${(x - 3.5).toFixed(1)}" y="${(Y(it.pulse) - 3.5).toFixed(1)}" width="7" height="7" transform="rotate(45 ${x.toFixed(1)} ${Y(it.pulse).toFixed(1)})" fill="var(--pulso)"/>`;
+      for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) { g = `<line x1="0" x2="${total}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E6EAE4"/>` + g; eixo += `<text x="${AX - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`; }
+      if (st.pulso && comItem.length > 1) g += `<polyline fill="none" stroke="var(--pulso)" stroke-width="1.6" stroke-dasharray="3 3" points="${comItem.map((c) => `${c.x.toFixed(1)},${Y(c.it.pulse).toFixed(1)}`).join(' ')}"/>`;
+      for (const c of comItem) {
+        const it = c.it, x = c.x, ys = Y(it.sys), yd = Y(it.dia), sel = it.id === st.sel;
+        g += `<rect x="${(x - bw / 2).toFixed(1)}" y="${ys.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, yd - ys).toFixed(1)}" rx="${(bw / 2).toFixed(1)}" fill="${sel ? 'var(--ambar)' : 'rgba(46,50,114,0.20)'}"/>`;
+        if (st.pulso) g += `<rect x="${(x - 4).toFixed(1)}" y="${(Y(it.pulse) - 4).toFixed(1)}" width="8" height="8" transform="rotate(45 ${x.toFixed(1)} ${Y(it.pulse).toFixed(1)})" fill="var(--pulso)" stroke="#fff" stroke-width="1"/>`;
+        g += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="${raio}" fill="var(--sys)" stroke="#fff" stroke-width="2"/><text class="num-sys" x="${x.toFixed(1)}" y="${(ys + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.sys)}</text>`;
+        g += `<circle cx="${x.toFixed(1)}" cy="${yd.toFixed(1)}" r="${raio}" fill="var(--dia)" stroke="#fff" stroke-width="2"/><text class="num-dia" x="${x.toFixed(1)}" y="${(yd + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.dia)}</text>`;
       }
     } else {
       const ds = itens.filter((it) => it.prev).flatMap((it) => [it.sys - it.prev.sys, it.dia - it.prev.dia].concat(st.pulso ? [it.pulse - it.prev.pulse] : []));
       const m = Math.max(10, Math.ceil((Math.max(0, ...ds.map(Math.abs)) + 2) / 10) * 10);
-      const Y = (v) => T + ((m - v) * ph) / (2 * m);
-      for (const v of [-m, -m / 2, 0, m / 2, m]) { const vv = Math.round(v); g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === 0 ? '#9AA4AB' : '#E6EAE4'}"/><text x="${L - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${vv > 0 ? '+' + vv : vv < 0 ? '−' + -vv : '0'}</text>`; }
-      const nb = st.pulso ? 3 : 2, sb = Math.max(4, Math.min(11, (Math.min(minGap, pw / itens.length) * 0.8) / nb));
-      for (const it of itens) {
-        const x = X(it.ts);
-        if (!it.prev) { g += `<circle cx="${x.toFixed(1)}" cy="${Y(0)}" r="3" fill="none" stroke="#9AA4AB"/>`; continue; }
+      const Y = (v) => GT + ((m - v) * ph) / (2 * m);
+      for (const v of [-m, -m / 2, 0, m / 2, m]) { const vv = Math.round(v); g = `<line x1="0" x2="${total}" y1="${Y(v)}" y2="${Y(v)}" stroke="${v === 0 ? '#9AA4AB' : '#E6EAE4'}"/>` + g; eixo += `<text x="${AX - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${vv > 0 ? '+' + vv : vv < 0 ? '−' + -vv : '0'}</text>`; }
+      const nb = st.pulso ? 3 : 2, sb = Math.max(6, Math.min(12, (menorCasa * 0.75) / nb));
+      for (const c of comItem) {
+        const it = c.it, x = c.x;
+        if (!it.prev) { g += `<circle cx="${x.toFixed(1)}" cy="${Y(0)}" r="4" fill="none" stroke="#9AA4AB" stroke-width="1.5"/>`; continue; }
         const vals = [it.sys - it.prev.sys, it.dia - it.prev.dia].concat(st.pulso ? [it.pulse - it.prev.pulse] : []);
         vals.forEach((d, k) => {
-          const x0 = x - (nb * sb) / 2 + k * sb, y0 = Y(Math.max(0, d)), hh = Math.max(1.5, Math.abs(Y(d) - Y(0)));
+          const x0 = x - (nb * sb) / 2 + k * sb, y0 = Y(Math.max(0, d)), hh = Math.max(2, Math.abs(Y(d) - Y(0)));
           const cor = k === 2 ? 'var(--pulso)' : d > 0 ? 'var(--sobe)' : d < 0 ? 'var(--desce)' : '#9AA4AB';
-          g += `<rect x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${(sb - 1).toFixed(1)}" height="${hh.toFixed(1)}" fill="${cor}" opacity="${k === 1 ? 0.65 : 1}"/>`;
+          g += `<rect x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${(sb - 1.5).toFixed(1)}" height="${hh.toFixed(1)}" rx="1.5" fill="${cor}" opacity="${k === 1 ? 0.65 : 1}"/>`;
         });
       }
     }
     // seleção: guia vertical + etiqueta
-    const s = itens.find((it) => it.id === st.sel);
+    const s = comItem.find((c) => c.it.id === st.sel);
     if (s) {
-      const x = X(s.ts);
-      marcas2 += `<line x1="${x}" x2="${x}" y1="${T - 4}" y2="${T + ph}" stroke="var(--ambar)" stroke-width="2" stroke-dasharray="4 3"/>`;
-      const d = new Date(s.ts);
-      const txt = st.periodo === 'mes' ? `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} · média ${s.sys}/${s.dia}` : `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} ${fmtHora(s.ts)} · ${s.sys}/${s.dia} · ${s.pulse}`;
-      const tw = txt.length * 6.1 + 16, tx = Math.min(W - R - tw, Math.max(L, x - tw / 2));
-      marcas2 += `<rect x="${tx}" y="4" width="${tw}" height="20" rx="10" fill="var(--tinta)"/><text x="${tx + tw / 2}" y="18" font-size="11" text-anchor="middle" fill="#fff" font-weight="600">${esc(txt)}</text>`;
+      const x = s.x, it = s.it, d = new Date(it.ts);
+      marcas += `<line x1="${x}" x2="${x}" y1="${GT - 6}" y2="${GT + ph}" stroke="var(--ambar)" stroke-width="2" stroke-dasharray="4 3"/>`;
+      const txt = st.periodo === 'mes' ? `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} · média ${it.sys}/${it.dia}` : `${DIAS_CURTOS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} ${fmtHora(it.ts)} · ${it.sys}/${it.dia} · ${it.pulse}`;
+      const tw = txt.length * 6.1 + 16, tx = Math.min(total - tw - 2, Math.max(2, x - tw / 2));
+      marcas += `<rect x="${tx}" y="5" width="${tw}" height="21" rx="10.5" fill="var(--tinta)"/><text x="${tx + tw / 2}" y="19.5" font-size="11" text-anchor="middle" fill="#fff" font-weight="600">${esc(txt)}</text>`;
     }
-    for (const it of itens) alvos += `<circle class="alvo" data-id="${esc(it.id)}" cx="${X(it.ts).toFixed(1)}" cy="${T + ph / 2}" r="0" fill="transparent"/>`;
-    return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Gráfico de ${itens.length} ${st.periodo === 'mes' ? 'dias' : 'leituras'}; toque num ponto para ver na lista" data-l="${L}" data-pw="${pw}">${g}${marcas2}${alvos}</svg>`;
+    for (const c of comItem) alvos += `<circle class="alvo" data-id="${esc(c.it.id)}" cx="${c.x.toFixed(1)}" cy="${GT + ph / 2}" r="0" fill="transparent"/>`;
+    return `<div class="gr-wrap">${svgEixo(eixo)}<div class="gr-rolagem"><svg class="principal" viewBox="0 0 ${total} ${GH}" width="${total}" height="${GH}" role="img" aria-label="Gráfico de ${comItem.length} ${st.periodo === 'mes' ? 'dias' : 'leituras'}; toque num ponto para ver na lista">${g}${marcas}${alvos}</svg></div></div>`;
   }
   // ---------- lista ----------
   function lista(itens) {
@@ -644,52 +673,130 @@ const Painel = (() => {
     }
     return html + '</ul>';
   }
-  function render() {
+  // ---------- navegação só por períodos com leituras ----------
+  function vizinho(dir) {
+    const j = janela(st.periodo, st.ancora);
+    const asc = registros.slice().sort((x, y) => x.ts - y.ts);
+    if (!asc.length) return null;
+    if (dir < 0) {
+      const r = [...asc].reverse().find((x) => x.ts < j.ini);
+      return r ? r.ts : null;
+    }
+    const r = asc.find((x) => x.ts >= j.fim);
+    if (!r) return null;
+    if (st.periodo !== 'semana') return r.ts;
+    // semana: começa no dia da próxima leitura, sem passar da última leitura registrada
+    const ultimo = asc[asc.length - 1].ts;
+    return Math.min(addDias(inicioDia(r.ts), 6) + DIA_MS / 2, Math.max(r.ts, ultimo));
+  }
+  function render(rolar) {
     const { j, itens, noPeriodo, antes } = montarItens();
     st.itens = itens;
     if (st.sel && !itens.some((it) => it.id === st.sel)) st.sel = null;
     document.querySelectorAll('#painel [data-p]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.p === st.periodo)));
     document.querySelectorAll('#painel [data-m]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.m === st.modo)));
     $('#pn-pulso').setAttribute('aria-pressed', String(st.pulso));
-    $('#pn-rotulo').textContent = rotulo(st.periodo, j);
-    $('#pn-prox').disabled = j.fim > Date.now();
+    $('#pn-rotulo-txt').textContent = rotulo(st.periodo, j);
+    $('#pn-ant').disabled = vizinho(-1) == null;
+    $('#pn-prox').disabled = vizinho(1) == null;
     $('#pn-resumo').innerHTML = resumo(noPeriodo, antes);
+    const velho = document.querySelector('#pn-grafico .gr-rolagem');
+    const scrollAntes = velho ? velho.scrollLeft : 0;
     $('#pn-grafico').innerHTML = grafico(itens, j);
     $('#pn-lista').innerHTML = lista(itens);
+    const rol = document.querySelector('#pn-grafico .gr-rolagem');
+    if (rol) {
+      if (rolar === 'fim') rol.scrollLeft = rol.scrollWidth;
+      else rol.scrollLeft = scrollAntes;
+    }
+  }
+  function centralizarNoGrafico(id, suave) {
+    const rol = document.querySelector('#pn-grafico .gr-rolagem'), c = rol && rol.querySelector(`.alvo[data-id="${CSS.escape(id)}"]`);
+    if (!c) return;
+    const x = +c.getAttribute('cx'), alvo = Math.max(0, x - rol.clientWidth / 2);
+    if (Math.abs(rol.scrollLeft - alvo) > 2) rol.scrollTo({ left: alvo, behavior: suave ? 'smooth' : 'auto' });
   }
   function selecionar(id, origem) {
     st.sel = id; render();
+    const suave = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const alvo = document.querySelector(`#pn-lista .pn-item[data-id="${CSS.escape(id)}"]`);
-    if (alvo && origem === 'grafico') {
-      const suave = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      alvo.scrollIntoView({ block: 'center', behavior: suave ? 'smooth' : 'auto' });
-    }
+    if (alvo && origem === 'grafico') alvo.scrollIntoView({ block: 'center', behavior: suave ? 'smooth' : 'auto' });
+    if (origem === 'lista') centralizarNoGrafico(id, suave);
   }
   function toqueGrafico(ev) {
-    const svg = ev.target.closest('svg'); if (!svg || !st.itens.length) return;
+    const svg = ev.target.closest('svg.principal'); if (!svg || !st.itens.length) return;
     const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
     const p = pt.matrixTransform(svg.getScreenCTM().inverse());
     let melhor = null, dmin = Infinity;
     for (const c of svg.querySelectorAll('.alvo')) { const d = Math.abs(+c.getAttribute('cx') - p.x); if (d < dmin) { dmin = d; melhor = c.dataset.id; } }
     if (melhor && dmin < 40) selecionar(melhor, 'grafico');
   }
+  // ---------- calendário ----------
+  function abrirCalendario() {
+    const diasCom = new Set(registros.map((r) => chaveDia(r.ts)));
+    if (!diasCom.size) { toast('Ainda não há leituras registradas'); return; }
+    const mesesCom = [...new Set(registros.map((r) => { const d = new Date(r.ts); return d.getFullYear() * 12 + d.getMonth(); }))].sort((a, b) => a - b);
+    const a0 = new Date(st.ancora); let mes = a0.getFullYear() * 12 + a0.getMonth();
+    if (!mesesCom.includes(mes)) mes = mesesCom[mesesCom.length - 1];
+    const j = janela(st.periodo, st.ancora);
+    const f = document.createElement('div'); f.className = 'fundo';
+    const desenhar = () => {
+      const ano = Math.floor(mes / 12), m = mes % 12;
+      const primeiro = new Date(ano, m, 1), nDias = new Date(ano, m + 1, 0).getDate();
+      const ant = mesesCom.filter((x) => x < mes).pop(), prox = mesesCom.find((x) => x > mes);
+      let cel = '';
+      for (let i = 0; i < primeiro.getDay(); i++) cel += '<span></span>';
+      for (let d = 1; d <= nDias; d++) {
+        const t = new Date(ano, m, d, 12).getTime(), k = chaveDia(t), tem = diasCom.has(k);
+        const noPeriodo = t >= j.ini && t < j.fim;
+        cel += `<button class="cal-dia${tem ? ' tem' : ''}${noPeriodo ? ' atual' : ''}" data-t="${t}" ${tem ? '' : 'aria-disabled="true"'} aria-label="${d} de ${MESES_LONGOS[m]}${tem ? '' : ', sem leituras'}">${d}</button>`;
+      }
+      f.innerHTML = `<div class="dialogo calendario" role="dialog" aria-modal="true" aria-label="Escolher data">
+        <div class="cal-topo">
+          <button class="icone" data-cal="ant" ${ant == null ? 'disabled' : ''} aria-label="Mês anterior com leituras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <b>${MESES_LONGOS[m][0].toUpperCase() + MESES_LONGOS[m].slice(1)} de ${ano}</b>
+          <button class="icone" data-cal="prox" ${prox == null ? 'disabled' : ''} aria-label="Próximo mês com leituras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+        </div>
+        <div class="cal-sem">${['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((x) => `<span>${x}</span>`).join('')}</div>
+        <div class="cal-grade">${cel}</div>
+        <p class="cal-legenda"><i></i>dias com leitura</p>
+        <div class="botoes"><button class="btn btn-sec" data-cal="fechar">Fechar</button></div>
+      </div>`;
+    };
+    desenhar();
+    f.onclick = (ev) => {
+      if (ev.target === f) { f.remove(); return; }
+      const b = ev.target.closest('button'); if (!b) return;
+      if (b.dataset.cal === 'fechar') { f.remove(); return; }
+      if (b.dataset.cal === 'ant') { mes = mesesCom.filter((x) => x < mes).pop(); desenhar(); return; }
+      if (b.dataset.cal === 'prox') { mes = mesesCom.find((x) => x > mes); desenhar(); return; }
+      if (b.dataset.t) {
+        const t = +b.dataset.t, d = new Date(t);
+        if (!b.classList.contains('tem')) { toast(`Não há leituras em ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`); return; }
+        f.remove(); st.ancora = t; st.sel = null; render('fim');
+      }
+    };
+    $('#camada').appendChild(f);
+    const foco = f.querySelector('.cal-dia.atual.tem') || f.querySelector('.cal-dia.tem'); if (foco) foco.focus();
+  }
   function abrir() {
     const ult = registros[0];
     st.ancora = ult ? ult.ts : Date.now(); st.sel = null;
     mostrar('painel');
-    render();
+    render('fim');
   }
   let rz = 0;
-  window.addEventListener('resize', () => { if (telaAtual !== 'painel') return; cancelAnimationFrame(rz); rz = requestAnimationFrame(render); });
+  window.addEventListener('resize', () => { if (telaAtual !== 'painel') return; cancelAnimationFrame(rz); rz = requestAnimationFrame(() => render()); });
   $('#painel').addEventListener('click', (ev) => {
-    const p = ev.target.closest('[data-p]'); if (p) { st.periodo = p.dataset.p; render(); return; }
+    const p = ev.target.closest('[data-p]'); if (p) { st.periodo = p.dataset.p; render('fim'); return; }
     const m = ev.target.closest('[data-m]'); if (m) { st.modo = m.dataset.m; render(); return; }
     const it = ev.target.closest('.pn-item'); if (it) { selecionar(it.dataset.id, 'lista'); return; }
   });
   $('#pn-grafico').addEventListener('click', toqueGrafico);
   $('#pn-pulso').onclick = () => { st.pulso = !st.pulso; render(); };
-  $('#pn-ant').onclick = () => { st.ancora = mover(st.periodo, st.ancora, -1); render(); };
-  $('#pn-prox').onclick = () => { st.ancora = mover(st.periodo, st.ancora, 1); render(); };
+  $('#pn-ant').onclick = () => { const t = vizinho(-1); if (t != null) { st.ancora = t; st.sel = null; render('fim'); } };
+  $('#pn-prox').onclick = () => { const t = vizinho(1); if (t != null) { st.ancora = t; st.sel = null; render('fim'); } };
+  $('#pn-rotulo').onclick = abrirCalendario;
   return { abrir, render, estado: st };
 })();
 
