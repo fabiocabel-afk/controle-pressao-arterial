@@ -212,7 +212,7 @@ button { cursor: pointer; }
 .pn-grafico .alvo { cursor: pointer; }
 .pn-lista { padding: 4px 18px 40px; }
 .pn-lista .lista { margin-bottom: 4px; }
-.pn-item { width: 100%; border: 0; background: transparent; text-align: left; display: grid; grid-template-columns: 4.2em 1fr auto; gap: 10px; align-items: center; padding: 12px 14px; scroll-margin-top: 460px; }
+.pn-item { width: 100%; border: 0; background: transparent; text-align: left; display: grid; grid-template-columns: 4.2em 1fr auto; gap: 10px; align-items: center; padding: 12px 14px; scroll-margin-top: 500px; }
 .pn-item.sel { background: #FFF3D6; box-shadow: inset 4px 0 0 var(--ambar); }
 .pn-item .quando { color: var(--tinta-2); font-variant-numeric: tabular-nums; font-size: 0.95rem; }
 .pn-item .quando b { display: block; color: var(--tinta); font-size: 1rem; }
@@ -272,6 +272,29 @@ button { cursor: pointer; }
 .nota-exp { background: #FFF9EA; padding: 8px 14px 12px 18px; font-size: 0.92rem; border-top: 1px dashed #EBD9A6; box-shadow: inset 4px 0 0 var(--ambar); }
 .nota-exp div + div { margin-top: 3px; }
 .nota-exp-h { font-weight: 650; color: var(--tinta-2); margin-top: 6px; }
+
+
+/* ---------- faixa de referência ---------- */
+.pn-param { display: flex; align-items: center; gap: 8px; width: 100%; border: 1px solid #EBD99A; background: #FFFBEA; color: #6E5A0E; border-radius: 10px; padding: 7px 10px; font-weight: 600; font-size: 0.9rem; margin-bottom: 8px; text-align: left; }
+.pn-param i { width: 14px; height: 14px; border-radius: 3px; background: rgba(240,196,40,0.45); border: 1px dashed #D9B22E; flex: 0 0 auto; }
+.pn-param span { flex: 1; }
+.pn-param svg { width: 18px; height: 18px; }
+.faixas { max-height: 88vh; overflow-y: auto; }
+.fx-dica, .fx-nota { color: var(--tinta-2); font-size: 0.88rem; margin: 0 0 10px; }
+.fx-nota { margin: 12px 0 0; }
+.fx-lista { display: grid; gap: 8px; }
+.fx-op { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; padding: 10px 12px; border: 1.5px solid var(--linha); border-radius: 12px; cursor: pointer; }
+.fx-op:has(input:checked) { border-color: var(--start); background: #F3F4FB; }
+.fx-op input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--start); }
+.fx-op b { display: block; font-size: 0.95rem; }
+.fx-op em { display: block; font-style: normal; font-weight: 700; color: #6E5A0E; margin: 2px 0; }
+.fx-op small { display: block; color: var(--tinta-2); font-size: 0.84rem; }
+.fx-pers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; opacity: 0.6; }
+.fx-pers.ativo { opacity: 1; }
+.fx-pers label { display: block; font-size: 0.82rem; color: var(--tinta-2); font-weight: 600; margin-bottom: 3px; }
+.fx-pers input { width: 100%; padding: 9px 10px; border-radius: 10px; border: 1.5px solid var(--linha); font: inherit; font-weight: 700; }
+.pn-item .valores.fora { color: #C25E14; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 @media (prefers-reduced-motion: no-preference) {
   .toast { animation: sobe 180ms ease-out; }
@@ -340,6 +363,7 @@ button { cursor: pointer; }
     <div class="pn-resumo" id="pn-resumo"></div>
   </div>
   <div class="pn-fixo">
+    <button class="pn-param" id="pn-param" aria-label="Faixa de referência: toque para trocar"><i aria-hidden="true"></i><span id="pn-param-txt"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
     <div class="pn-barra">
       <div class="segmentos pequeno" role="tablist" aria-label="Mostrar">
         <button role="tab" data-m="valores">Valores</button><button role="tab" data-m="variacao">Variação</button>

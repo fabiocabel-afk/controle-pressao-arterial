@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.6.0';
 const DEVICE_ID = 'omron-hem7122';
 
 // ====================== utilidades ======================
@@ -161,6 +161,24 @@ function renderTopo() {
   $('#btn-perfil').setAttribute('aria-label', `Pessoa: ${p.nome}. Trocar ou adicionar pessoa`);
   const pn = $('#painel-pessoa'); if (pn) pn.textContent = p.nome;
 }
+
+// ---------- faixas de referência (limite do "normal") ----------
+// sys/dia = valor-limite; inclusivo = o próprio limite ainda é normal ("até"), senão precisa ficar abaixo.
+const FAIXAS = [
+  { id: 'sbc2025', curto: 'Diretriz 2025', nome: 'Diretriz Brasileira de Hipertensão Arterial 2025', ano: 2025, sys: 120, dia: 80, inclusivo: false, desc: 'Normal: abaixo de 120/80. De 120/80 a 139/89 é pré-hipertensão; hipertensão a partir de 140/90. É a mais atual.' },
+  { id: 'meta2025', curto: 'Meta 2025', nome: 'Meta de tratamento da Diretriz 2025', ano: 2025, sys: 130, dia: 80, inclusivo: false, desc: 'Para quem já trata a hipertensão: manter abaixo de 130/80, quando tolerado.' },
+  { id: 'sbc2020', curto: 'Diretriz 2020', nome: 'Diretrizes Brasileiras de Hipertensão Arterial 2020', ano: 2020, sys: 129, dia: 84, inclusivo: true, desc: 'Ótima: abaixo de 120/80. Normal: até 129/84. Pré-hipertensão: 130–139/85–89; hipertensão a partir de 140/90.' },
+  { id: 'sbc2016', curto: 'Diretriz 2016', nome: '7ª Diretriz Brasileira de Hipertensão Arterial (2016)', ano: 2016, sys: 120, dia: 80, inclusivo: true, desc: 'Normal: até 120/80. Pré-hipertensão: 121–139/81–89; hipertensão a partir de 140/90.' },
+  { id: 'sbc2010', curto: 'Diretriz 2010', nome: 'VI Diretrizes Brasileiras de Hipertensão (2010)', ano: 2010, sys: 130, dia: 85, inclusivo: false, desc: 'Ótima: abaixo de 120/80. Normal: abaixo de 130/85. Limítrofe: 130–139/85–89; hipertensão a partir de 140/90.' },
+];
+function faixaDe(perfil) {
+  const p = perfil && perfil.parametro;
+  if (p && p.id === 'personalizado' && Number.isInteger(p.sys) && Number.isInteger(p.dia)) return { id: 'personalizado', curto: 'Personalizado', nome: 'Faixa personalizada', sys: p.sys, dia: p.dia, inclusivo: true, desc: `Normal: até ${p.sys}/${p.dia}.` };
+  return FAIXAS.find((f) => p && f.id === p.id) || FAIXAS[0];
+}
+const faixaTexto = (f) => `${f.curto} · ${f.inclusivo ? 'até' : 'abaixo de'} ${f.sys}/${f.dia}`;
+const foraDaFaixa = (r, f) => (f.inclusivo ? r.sys > f.sys || r.dia > f.dia : r.sys >= f.sys || r.dia >= f.dia);
+
 // ---------- notas ----------
 const CATEGORIAS = [
   { k: 'sintomas', nome: 'Sintomas', op: ['Dor de cabeça', 'Tontura', 'Visão turva', 'Falta de ar', 'Dor no peito', 'Palpitação', 'Cansaço', 'Nenhum'] },
@@ -892,14 +910,19 @@ const Painel = (() => {
     if (phi - plo < 40) { const m = (phi + plo) / 2; plo = Math.floor((m - 20) / 10) * 10; phi = plo + 40; }
     const YP = (v) => P0 + 16 + ((phi - v) * (HP - 32)) / (phi - plo);
     if (st.modo === 'valores') {
-      let lo = Math.min(...itens.map((it) => it.dia)), hi = Math.max(...itens.map((it) => it.sys));
+      const fx = faixaDe(perfilDe(perfilAtual));
+      let lo = Math.min(fx.dia, ...itens.map((it) => it.dia)), hi = Math.max(fx.sys, ...itens.map((it) => it.sys));
       lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
       const Y = (v) => GT + ((hi - v) * PH) / (hi - lo);
       const passo = hi - lo > 100 ? 40 : 20;
-      for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) { g = `<line x1="0" x2="${total}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E6EAE4"/>` + g; eixo += `<text x="${AX - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`; }
+      for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) { g = `<line x1="0" x2="${total}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E6EAE4"/>` + g; if (Math.abs(Y(v) - Y(fx.sys)) > 10 && Math.abs(Y(v) - Y(fx.dia)) > 10) eixo += `<text x="${AX - 6}" y="${Y(v) + 3.5}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`; }
+      // faixa de referência: amarelo bem suave entre o limite da diastólica e o da sistólica
+      const yS = Y(fx.sys), yD = Y(fx.dia);
+      g = `<rect class="faixa-ref" x="0" y="${yS.toFixed(1)}" width="${total}" height="${(yD - yS).toFixed(1)}" fill="rgba(240,196,40,0.16)"/><line x1="0" x2="${total}" y1="${yS.toFixed(1)}" y2="${yS.toFixed(1)}" stroke="#E2BE3C" stroke-width="1" stroke-dasharray="5 4"/><line x1="0" x2="${total}" y1="${yD.toFixed(1)}" y2="${yD.toFixed(1)}" stroke="#E2BE3C" stroke-width="1" stroke-dasharray="5 4"/>` + g;
+      eixo += `<text x="${AX - 6}" y="${(yS + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="#A78712" font-weight="700">${fx.sys}</text><text x="${AX - 6}" y="${(yD + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="#A78712" font-weight="700">${fx.dia}</text>`;
       for (const c of comItem) {
-        const it = c.it, x = c.x, ys = Y(it.sys), yd = Y(it.dia), sel = it.id === st.sel;
-        g += `<rect x="${(x - bw / 2).toFixed(1)}" y="${ys.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, yd - ys).toFixed(1)}" rx="${(bw / 2).toFixed(1)}" fill="${sel ? 'var(--ambar)' : 'rgba(46,50,114,0.20)'}"/>`;
+        const it = c.it, x = c.x, ys = Y(it.sys), yd = Y(it.dia), sel = it.id === st.sel, fora = foraDaFaixa(it, fx);
+        g += `<rect class="barra-pa${fora ? ' fora' : ''}" x="${(x - bw / 2).toFixed(1)}" y="${ys.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, yd - ys).toFixed(1)}" rx="${(bw / 2).toFixed(1)}" fill="${fora ? 'rgba(232,126,40,0.62)' : 'rgba(46,50,114,0.20)'}"${sel ? ' stroke="var(--tinta)" stroke-width="2.5"' : ''}/>`;
         g += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="${raio}" fill="var(--sys)" stroke="#fff" stroke-width="2"/><text class="num-sys" x="${x.toFixed(1)}" y="${(ys + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.sys)}</text>`;
         g += `<circle cx="${x.toFixed(1)}" cy="${yd.toFixed(1)}" r="${raio}" fill="var(--dia)" stroke="#fff" stroke-width="2"/><text class="num-dia" x="${x.toFixed(1)}" y="${(yd + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.dia)}</text>`;
       }
@@ -966,7 +989,8 @@ const Painel = (() => {
       const sub = st.periodo === 'mes' ? `média de ${plural(it.n, 'leitura', 'leituras')}` : '';
       let meio, dir;
       if (st.modo === 'valores') {
-        meio = `<span class="valores">${it.sys}/${it.dia}${sub ? `<span class="sub">${sub}</span>` : ''}</span>`;
+        const fora = foraDaFaixa(it, faixaDe(perfilDe(perfilAtual)));
+        meio = `<span class="valores${fora ? ' fora' : ''}">${it.sys}/${it.dia}${fora ? '<span class="sr"> (fora da faixa)</span>' : ''}${sub ? `<span class="sub">${sub}</span>` : ''}</span>`;
         dir = `${it.pulse} bpm`;
       } else if (!it.prev) {
         meio = `<span class="valores"><span class="sub">primeira leitura registrada</span>${it.sys}/${it.dia}</span>`; dir = `${it.pulse} bpm`;
@@ -1012,6 +1036,7 @@ const Painel = (() => {
     document.querySelectorAll('#painel [data-m]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.m === st.modo)));
     $('#pn-pulso').setAttribute('aria-pressed', String(st.pulso));
     $('#pn-rotulo-txt').textContent = rotulo(st.periodo, j);
+    $('#pn-param-txt').textContent = faixaTexto(faixaDe(perfilDe(perfilAtual)));
     $('#pn-ant').disabled = vizinho(-1) == null;
     $('#pn-prox').disabled = vizinho(1) == null;
     $('#pn-resumo').innerHTML = resumo(noPeriodo, antes);
@@ -1045,6 +1070,60 @@ const Painel = (() => {
     let melhor = null, dmin = Infinity;
     for (const c of svg.querySelectorAll('.alvo')) { const d = Math.abs(+c.getAttribute('cx') - p.x); if (d < dmin) { dmin = d; melhor = c.dataset.id; } }
     if (melhor && dmin < 40) selecionar(melhor, 'grafico');
+  }
+  // ---------- escolher a faixa de referência ----------
+  function abrirFaixas() {
+    const p = perfilDe(perfilAtual); if (!p) return;
+    const atual = faixaDe(p);
+    const pers = p.parametro && p.parametro.id === 'personalizado' ? p.parametro : { sys: 130, dia: 85 };
+    const f = document.createElement('div'); f.className = 'fundo';
+    f.innerHTML = `<div class="dialogo faixas" role="dialog" aria-modal="true" aria-labelledby="fx-t">
+      <h3 id="fx-t">Faixa de referência de ${esc(p.nome)}</h3>
+      <p class="fx-dica">Leituras acima do limite aparecem em laranja no gráfico.</p>
+      <div class="fx-lista" role="radiogroup">
+        ${FAIXAS.map((x) => `<label class="fx-op"><input type="radio" name="fx" value="${x.id}"${atual.id === x.id ? ' checked' : ''}><span><b>${esc(x.nome)}</b><em>${x.inclusivo ? 'Até' : 'Abaixo de'} ${x.sys}/${x.dia}</em><small>${esc(x.desc)}</small></span></label>`).join('')}
+        <label class="fx-op"><input type="radio" name="fx" value="personalizado"${atual.id === 'personalizado' ? ' checked' : ''}><span><b>Personalizada</b><small>Para quem tem uma faixa própria definida pelo médico.</small>
+          <span class="fx-pers"><span class="campo" id="fx-c-sys"><label for="fx-sys">Sistólica até</label><input id="fx-sys" type="number" inputmode="numeric" min="90" max="200" value="${pers.sys}"></span>
+          <span class="campo" id="fx-c-dia"><label for="fx-dia">Diastólica até</label><input id="fx-dia" type="number" inputmode="numeric" min="50" max="130" value="${pers.dia}"></span></span>
+          <span class="msg-erro" id="fx-erro" hidden></span></span></label>
+      </div>
+      <p class="fx-nota">As faixas das diretrizes valem para a medida no consultório. Em casa, a diretriz considera hipertensão a partir de 130/80 (no consultório, 140/90). Na dúvida, use a faixa indicada pelo seu médico.</p>
+      <div class="botoes"><button class="btn btn-sec" data-fx="cancelar">Cancelar</button><button class="btn btn-start" data-fx="salvar">Salvar</button></div>
+    </div>`;
+    const marcarPers = () => { const pe = f.querySelector('input[value="personalizado"]'); f.querySelector('.fx-pers').classList.toggle('ativo', pe.checked); };
+    f.addEventListener('change', marcarPers);
+    f.addEventListener('focusin', (ev) => { if (ev.target.id === 'fx-sys' || ev.target.id === 'fx-dia') { f.querySelector('input[value="personalizado"]').checked = true; marcarPers(); } });
+    f.onclick = async (ev) => {
+      if (ev.target === f) { f.remove(); return; }
+      const b = ev.target.closest('[data-fx]'); if (!b) return;
+      if (b.dataset.fx === 'cancelar') { f.remove(); return; }
+      const id = f.querySelector('input[name="fx"]:checked').value;
+      let parametro = { id };
+      if (id === 'personalizado') {
+        const sy = Number(f.querySelector('#fx-sys').value), di = Number(f.querySelector('#fx-dia').value), er = f.querySelector('#fx-erro');
+        let msg = '';
+        if (!Number.isInteger(sy) || sy < 90 || sy > 200) msg = 'Sistólica entre 90 e 200.';
+        else if (!Number.isInteger(di) || di < 50 || di > 130) msg = 'Diastólica entre 50 e 130.';
+        else if (di >= sy) msg = 'A diastólica precisa ser menor que a sistólica.';
+        if (msg) { er.textContent = msg; er.hidden = false; return; }
+        parametro = { id, sys: sy, dia: di };
+      }
+      b.disabled = true;
+      try {
+        const novo = { ...p, parametro, updatedAt: Date.now() };
+        await DB.putPerfil(novo);
+        const conf = (await DB.perfis()).find((x) => x.id === p.id);
+        if (!conf || JSON.stringify(conf.parametro) !== JSON.stringify(parametro)) throw new Error('A faixa não foi encontrada no armazenamento depois de salvar.');
+        perfis = perfis.map((x) => (x.id === p.id ? conf : x));
+        f.remove(); render(); toast(`Faixa: ${faixaTexto(faixaDe(conf))}`);
+      } catch (e) {
+        b.disabled = false;
+        await dialog({ title: 'A faixa NÃO foi salva', detail: String(e && e.message || e), buttons: [{ label: 'Ok', value: 1, cls: 'btn-start' }] });
+      }
+    };
+    $('#camada').appendChild(f);
+    marcarPers();
+    const sel = f.querySelector('input[name="fx"]:checked'); if (sel) sel.focus();
   }
   // ---------- calendário ----------
   function abrirCalendario() {
@@ -1122,6 +1201,7 @@ const Painel = (() => {
   $('#pn-ant').onclick = () => { const t = vizinho(-1); if (t != null) { st.ancora = t; st.sel = null; render('fim'); } };
   $('#pn-prox').onclick = () => { const t = vizinho(1); if (t != null) { st.ancora = t; st.sel = null; render('fim'); } };
   $('#pn-rotulo').onclick = abrirCalendario;
+  $('#pn-param').onclick = abrirFaixas;
   return { abrir, render, estado: st };
 })();
 
