@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.10.1';
 const DEVICE_ID = 'omron-hem7122';
 const APP_URL = 'https://fabiocabel-afk.github.io/controle-pressao-arterial/';
 
@@ -239,8 +239,10 @@ function renderInicio() {
   $('#lista').innerHTML = html;
 }
 function graficoSVG(s) {
+  // gráfico simples: linhas da sistólica e da diastólica com bolinhas numeradas + faixa de referência ao fundo
+  const fx = faixaDe(perfilDe(perfilAtual));
   const W = 320, H = 176, L = 30, R = 12, T = 14, B = 24;
-  let lo = Math.min(...s.map((r) => r.dia)), hi = Math.max(...s.map((r) => r.sys));
+  let lo = Math.min(fx.dia, ...s.map((r) => r.dia)), hi = Math.max(fx.sys, ...s.map((r) => r.sys));
   lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
   const X = (i) => L + 8 + (i * (W - L - R - 16)) / (s.length - 1), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
   const esp = (W - L - R - 16) / Math.max(1, s.length - 1);
@@ -248,6 +250,8 @@ function graficoSVG(s) {
   let g = '';
   const passo = hi - lo > 80 ? 40 : 20;
   for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E3E7E1"/><text x="${L - 6}" y="${Y(v) + 4}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`;
+  g += `<rect class="faixa-ref" x="${L}" y="${Y(fx.sys).toFixed(1)}" width="${W - L - R}" height="${(Y(fx.dia) - Y(fx.sys)).toFixed(1)}" fill="rgba(240,196,40,0.16)"/>` +
+    `<line x1="${L}" x2="${W - R}" y1="${Y(fx.sys).toFixed(1)}" y2="${Y(fx.sys).toFixed(1)}" stroke="#E2BE3C" stroke-dasharray="5 4"/><line x1="${L}" x2="${W - R}" y1="${Y(fx.dia).toFixed(1)}" y2="${Y(fx.dia).toFixed(1)}" stroke="#E2BE3C" stroke-dasharray="5 4"/>`;
   const linha = (k, cor, cls) => `<polyline fill="none" stroke="${cor}" stroke-width="2.2" stroke-linejoin="round" points="${s.map((x, i) => `${X(i).toFixed(1)},${Y(x[k]).toFixed(1)}`).join(' ')}"/>` +
     s.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x[k]).toFixed(1)}" r="${r.toFixed(1)}" fill="${cor}" stroke="#fff" stroke-width="1.5"/><text class="${cls}" x="${X(i).toFixed(1)}" y="${(Y(x[k]) + fs * 0.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#fff">${Math.floor(x[k] / 10)}</text>`).join('');
   const d0 = new Date(s[0].ts), d1 = new Date(s[s.length - 1].ts);
@@ -983,22 +987,111 @@ function abrirCompartilhar() {
   f.querySelector('[data-c="fechar"]').focus();
 }
 
+// ====================== como medir certo (orientações + áudio) ======================
+const GUIA = [
+  { t: 'Preparação (5 minutos antes)', itens: [
+    ['Bexiga vazia', 'Meça sempre com a bexiga vazia. Estar com vontade de urinar pode subir a pressão em até 10 a 15 mmHg.'],
+    ['Descanso total', 'Sente-se e fique totalmente relaxado por pelo menos 5 minutos antes de apertar o botão do aparelho.'],
+    ['Evite estimulantes', 'Não tome café, chá preto ou verde, energéticos nem fume nos 30 minutos antes da medição.'],
+    ['Evite exercícios', 'Não meça logo depois de esforço físico ou de subir escadas.'],
+  ] },
+  { t: 'Postura e posicionamento', itens: [
+    ['Pés no chão', 'Sente-se numa cadeira com apoio para as costas, pés bem apoiados no chão e pernas descruzadas. Cruzar as pernas pode elevar a leitura em até 8 mmHg.'],
+    ['Braço apoiado', 'O braço deve ficar apoiado numa mesa ou almofada, na altura do meio do peito (do coração), relaxado e com a palma da mão para cima.'],
+    ['Braço livre de roupas', 'A braçadeira vai direto sobre a pele, não por cima de mangas dobradas ou apertadas que garroteiem o braço.'],
+    ['Silêncio absoluto', 'Não fale nem mexa no celular durante a medição. Conversar pode alterar o resultado em até 10 mmHg.'],
+  ] },
+  { t: 'Ajuste do aparelho e da braçadeira', itens: [
+    ['Posição do tubo', 'A mangueira de ar deve sair pela parte interna do braço, alinhada em direção à palma da mão.'],
+    ['Altura da braçadeira', 'Coloque a braçadeira cerca de 2 a 3 cm acima da dobra do cotovelo.'],
+    ['Aperto ideal', 'Ela deve ficar justa, mas sem apertar demais: o suficiente para caber a ponta de um dedo entre o pano e o braço.'],
+    ['Tamanho da braçadeira', 'A braçadeira precisa servir no seu braço. Se ela ficar curta ou muito folgada, peça orientação sobre o tamanho certo, porque isso muda o resultado.'],
+  ] },
+  { t: 'Como registrar os dados', itens: [
+    ['Faça duas medições', 'Faça a primeira medição, espere 1 minuto e faça a segunda. Salve as duas aqui no app: o painel calcula as médias. Não escolha só a menor.'],
+    ['Horários fixos', 'O ideal é medir duas vezes ao dia: pela manhã, antes do remédio e do café, e à noite, antes do jantar ou de dormir.'],
+    ['Anote sem alterar', 'Registre data, hora e os valores (máxima, mínima e batimentos) exatamente como aparecem no visor. Nunca arredonde os números.'],
+    ['Use sempre o mesmo braço', 'Meça sempre no mesmo braço. Se não souber qual usar, pergunte ao seu médico. Use a nota "Como foi a medição" para registrar o braço e a posição.'],
+  ] },
+];
+const Voz = (() => {
+  const ok = typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  let atual = null, aoParar = null;
+  function vozPt() { const vs = ok ? speechSynthesis.getVoices() : []; return vs.find((v) => /^pt[-_]BR/i.test(v.lang)) || vs.find((v) => /^pt/i.test(v.lang)) || null; }
+  function parar() { if (!ok) return; const f = aoParar; atual = null; aoParar = null; speechSynthesis.cancel(); if (f) f(); }
+  // fala uma lista de trechos em sequência (trechos curtos evitam o corte de falas longas em alguns celulares)
+  function falar(id, trechos, fim) {
+    if (!ok) return false;
+    parar();
+    atual = id; aoParar = fim;
+    const v = vozPt();
+    trechos.forEach((t, i) => {
+      const u = new SpeechSynthesisUtterance(t); u.lang = 'pt-BR'; u.rate = 0.95; if (v) u.voice = v;
+      if (i === trechos.length - 1) u.onend = () => { if (atual === id) { const f = aoParar; atual = null; aoParar = null; if (f) f(); } };
+      u.onerror = () => { if (atual === id) { const f = aoParar; atual = null; aoParar = null; if (f) f(); } };
+      speechSynthesis.speak(u);
+    });
+    return true;
+  }
+  if (ok && speechSynthesis.getVoices) speechSynthesis.getVoices();
+  return { ok, falar, parar, falando: () => atual };
+})();
+function abrirGuia() {
+  const f = document.createElement('div'); f.className = 'fundo fundo-guia';
+  const icAudio = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>';
+  const icParar = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  f.innerHTML = `<div class="guia-medicao" role="dialog" aria-modal="true" aria-labelledby="gm-t">
+    <header class="gm-topo"><h3 id="gm-t">Como medir a pressão corretamente</h3>
+      <button class="icone" data-g="fechar" aria-label="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+    <nav class="gm-indice" aria-label="Partes">${GUIA.map((m, i) => `<button data-ir="${i}">${i + 1}. ${esc(m.t.split(' (')[0])}</button>`).join('')}</nav>
+    <div class="gm-corpo">
+      <p class="gm-intro">Pequenos detalhes mudam bastante o resultado. Siga estes passos para que as leituras mostrem a sua pressão real.${Voz.ok ? ' Toque em <b>Ouvir</b> para escutar cada parte.' : ''}</p>
+      ${GUIA.map((m, i) => `<section class="gm-mod" id="gm-mod-${i}" data-mod="${i}">
+        <div class="gm-mod-topo"><span class="gm-num">${i + 1}</span><h4>${esc(m.t)}</h4>
+          ${Voz.ok ? `<button class="gm-ouvir" data-ouvir="${i}" aria-pressed="false">${icAudio}<span>Ouvir</span></button>` : ''}</div>
+        <ul>${m.itens.map(([a, b]) => `<li><b>${esc(a)}:</b> ${esc(b)}</li>`).join('')}</ul></section>`).join('')}
+      <p class="gm-rodape">Estas orientações não substituem as do seu médico. Leituras muito altas, ou com sintomas como dor no peito ou falta de ar, precisam de atendimento.</p>
+    </div></div>`;
+  const marcar = (i, ligado) => { const b = f.querySelector(`[data-ouvir="${i}"]`); if (!b) return; b.setAttribute('aria-pressed', String(ligado)); b.innerHTML = (ligado ? icParar : icAudio) + `<span>${ligado ? 'Parar' : 'Ouvir'}</span>`; f.querySelector(`#gm-mod-${i}`).classList.toggle('lendo', ligado); };
+  const fechar = () => { Voz.parar(); f.remove(); document.removeEventListener('keydown', esc_); };
+  const esc_ = (ev) => { if (ev.key === 'Escape') fechar(); };
+  f.onclick = (ev) => {
+    if (ev.target === f) { fechar(); return; }
+    const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.g === 'fechar') { fechar(); return; }
+    if (b.dataset.ir != null) { const alvo = f.querySelector(`#gm-mod-${b.dataset.ir}`); alvo.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
+    if (b.dataset.ouvir != null) {
+      const i = +b.dataset.ouvir, id = 'mod-' + i;
+      if (Voz.falando() === id) { Voz.parar(); return; }
+      const m = GUIA[i];
+      const trechos = [`Parte ${i + 1}: ${m.t}.`].concat(m.itens.map(([a, t]) => `${a}. ${t}`));
+      Voz.falar(id, trechos, () => marcar(i, false));
+      marcar(i, true);
+    }
+  };
+  document.addEventListener('keydown', esc_);
+  $('#camada').appendChild(f);
+  f.querySelector('[data-g="fechar"]').focus();
+}
+
 // ====================== menu ======================
 function abrirMenu() {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
   const f = document.createElement('div'); f.className = 'fundo';
-  f.innerHTML = `<div class="folha" role="menu">
-    <button data-a="compartilhar" role="menuitem">Compartilhar o app</button>
-    <button data-a="json" role="menuitem">Exportar backup (JSON)</button>
-    <button data-a="csv" role="menuitem">Exportar planilha (CSV)</button>
-    <button data-a="imp" role="menuitem">Importar backup</button>
-    <button data-a="reset" role="menuitem" class="perigo">Apagar tudo e recomeçar</button>
+  f.innerHTML = `<div class="folha menu-principal" role="menu">
+    <button data-a="guia" role="menuitem"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6v3H9z"/><path d="M8 5H6v16h12V5h-2"/><path d="M9 12l2 2 4-4M9 17h6"/></svg><span>Como medir certo</span></button>
+    <button data-a="compartilhar" role="menuitem"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/></svg><span>Compartilhar o app</span></button>
+    <button data-a="json" role="menuitem"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/></svg><span>Exportar backup (JSON)</span></button>
+    <button data-a="csv" role="menuitem"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg><span>Exportar planilha (CSV)</span></button>
+    <button data-a="imp" role="menuitem"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 17v3h16v-3"/></svg><span>Importar backup</span></button>
+    <button data-a="reset" role="menuitem" class="perigo"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg><span>Apagar tudo e recomeçar</span></button>
     <div class="versao">Versão ${APP_VERSION} · leitor para Omron HEM-7122</div></div>`;
   f.onclick = async (ev) => {
-    const a = ev.target.dataset && ev.target.dataset.a;
+    const alvo = ev.target.closest && ev.target.closest('[data-a]'), a = alvo && alvo.dataset.a;
     if (ev.target === f || a) f.remove();
     try {
-      if (a === 'compartilhar') abrirCompartilhar();
+      if (a === 'guia') abrirGuia();
+      else if (a === 'compartilhar') abrirCompartilhar();
       else if (a === 'json') await exportarJSON();
       else if (a === 'csv') await exportarCSV();
       else if (a === 'imp') $('#in-backup').click();

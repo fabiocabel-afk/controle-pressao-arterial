@@ -79,6 +79,7 @@ button { cursor: pointer; }
 .grafico svg { width: 100%; height: auto; display: block; }
 .legenda { display: flex; gap: 16px; font-size: 0.85rem; color: var(--tinta-2); padding: 4px 8px 2px; }
 .legenda i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.legenda i.leg-faixa { width: 14px; height: 10px; border-radius: 2px; background: rgba(240,196,40,0.35); border: 1px dashed #D9B22E; vertical-align: -1px; }
 
 /* ---------- lista ---------- */
 .dia-titulo { font-size: 0.85rem; color: var(--tinta-2); margin: 18px 0 6px; font-weight: 600; }
@@ -326,6 +327,40 @@ button { cursor: pointer; }
 .data-origem.atencao { color: #8A5A12; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+
+/* ---------- como medir certo ---------- */
+.fundo-guia { align-items: stretch; }
+.guia-medicao { background: var(--papel); width: 100%; max-width: 560px; margin: 0 auto; height: 100%; display: flex; flex-direction: column; }
+@media (min-width: 600px) { .fundo-guia { padding: 24px 0; } .guia-medicao { border-radius: 20px; overflow: hidden; } }
+.gm-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: calc(10px + env(safe-area-inset-top, 0px)) 10px 6px 18px; background: var(--branco); }
+.gm-topo h3 { margin: 0; font-size: 1.15rem; }
+.gm-indice { display: flex; gap: 6px; overflow-x: auto; padding: 6px 18px 10px; background: var(--branco); border-bottom: 1px solid var(--linha); scrollbar-width: none; }
+.gm-indice button { flex: 0 0 auto; border: 1px solid var(--linha); background: var(--papel); border-radius: 999px; padding: 6px 12px; font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+.gm-corpo { flex: 1; overflow-y: auto; padding: 14px 18px calc(24px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling: touch; }
+.gm-intro, .gm-rodape { color: var(--tinta-2); font-size: 0.93rem; margin: 0 0 14px; }
+.gm-rodape { margin: 16px 0 0; font-size: 0.85rem; }
+.gm-mod { background: var(--branco); border: 1px solid var(--linha); border-radius: var(--raio); padding: 14px 16px 6px; margin-bottom: 12px; scroll-margin-top: 8px; transition: box-shadow 0.2s; }
+.gm-mod.lendo { box-shadow: 0 0 0 3px var(--ambar); }
+.gm-mod-topo { display: grid; grid-template-columns: 32px 1fr auto; gap: 10px; align-items: center; }
+.gm-num { width: 32px; height: 32px; border-radius: 50%; background: var(--start); color: #fff; display: grid; place-items: center; font-weight: 800; }
+.gm-mod h4 { margin: 0; font-size: 1.02rem; }
+.gm-ouvir { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--start); color: var(--start); background: var(--branco); border-radius: 999px; padding: 6px 12px; font-weight: 700; font-size: 0.88rem; }
+.gm-ouvir svg { width: 18px; height: 18px; }
+.gm-ouvir[aria-pressed="true"] { background: var(--start); color: #fff; }
+.gm-mod ul { margin: 12px 0 6px; padding-left: 18px; }
+.gm-mod li { margin-bottom: 9px; line-height: 1.45; }
+
+
+/* ---------- botões do topo com cara de botão do aparelho ---------- */
+.topo-acoes { gap: 10px; }
+.botao-aparelho { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(180deg, #FFFFFF 0%, #F6F7F4 100%); border: 1px solid #D6DCD4; box-shadow: 0 1px 0 #fff inset, 0 2px 4px rgba(31, 42, 51, 0.10); color: var(--tinta); }
+.botao-aparelho:hover { background: linear-gradient(180deg, #FFFFFF 0%, #EEF1EC 100%); }
+.botao-aparelho:active { box-shadow: 0 1px 2px rgba(31, 42, 51, 0.12) inset; transform: translateY(1px); }
+/* ---------- menu principal com ícones ---------- */
+.menu-principal button { display: grid; grid-template-columns: 26px 1fr; gap: 14px; align-items: center; }
+.menu-principal .mi { width: 24px; height: 24px; color: var(--start); }
+.menu-principal button.perigo .mi { color: var(--alerta); }
+
 @media (prefers-reduced-motion: no-preference) {
   .toast { animation: sobe 180ms ease-out; }
   @keyframes sobe { from { transform: translate(-50%, 8px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
@@ -340,11 +375,11 @@ button { cursor: pointer; }
     <button class="perfil-btn" id="btn-perfil" aria-haspopup="menu"><span id="perfil-avatar"></span><span class="perfil-nome" id="perfil-nome"></span>
       <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
     <div class="topo-acoes">
-    <button class="icone" id="btn-painel" aria-label="Abrir painel de acompanhamento">
+    <button class="icone botao-aparelho" id="btn-painel" aria-label="Abrir painel de acompanhamento">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
     </button>
-    <button class="icone" id="btn-menu" aria-label="Mais opções">
-      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+    <button class="icone botao-aparelho" id="btn-menu" aria-label="Menu" aria-haspopup="menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
     </button>
     </div>
   </header>
@@ -358,7 +393,7 @@ button { cursor: pointer; }
     <h2>Últimas leituras</h2>
     <div class="grafico">
       <div id="grafico"></div>
-      <div class="legenda"><span><i style="background:var(--sys)"></i>Sistólica</span><span><i style="background:var(--dia)"></i>Diastólica</span></div>
+      <div class="legenda"><span><i style="background:var(--sys)"></i>Sistólica</span><span><i style="background:var(--dia)"></i>Diastólica</span><span><i class="leg-faixa"></i>Faixa</span></div>
     </div>
   </section>
 
