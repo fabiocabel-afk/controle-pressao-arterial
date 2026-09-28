@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.10.1';
+const APP_VERSION = '1.11.0';
 const DEVICE_ID = 'omron-hem7122';
 const APP_URL = 'https://fabiocabel-afk.github.io/controle-pressao-arterial/';
 
@@ -222,41 +222,73 @@ function renderInicio() {
     $('#ultimo').innerHTML = `<div class="visor-vazio">Nenhuma leitura de ${esc((perfilDe(perfilAtual) || { nome: '' }).nome)} ainda.<br>Toque em <b>+</b> para adicionar a primeira.</div>`;
     $('#ultimo-quando').textContent = ''; $('#ultimo-origem').textContent = '';
   }
-  // gráfico simples das últimas 20 leituras
-  const serie = registros.slice(0, 20).reverse();
+  // gráfico simples: até 30 leituras, 7 visíveis por vez, rolando para os lados
+  const serie = registros.slice(0, LIMITE_INICIO).reverse();
   $('#bloco-grafico').hidden = serie.length < 2;
-  if (serie.length >= 2) $('#grafico').innerHTML = graficoSVG(serie);
+  if (serie.length >= 2) {
+    $('#grafico').innerHTML = graficoSVG(serie);
+    const rol = $('#grafico .gi-rolagem'); if (rol) rol.scrollLeft = rol.scrollWidth;
+  }
   // lista
   if (!registros.length) { $('#lista').innerHTML = `<p class="vazio">As leituras salvas aparecem aqui, da mais recente para a mais antiga.</p>`; return; }
   let html = '', diaAtual = '';
-  for (const r of registros) {
+  for (const r of registros.slice(0, LIMITE_INICIO)) {
     const dia = fmtDia(r.ts);
     if (dia !== diaAtual) { if (diaAtual) html += '</ul>'; html += `<div class="dia-titulo">${esc(dia)}</div><ul class="lista">`; diaAtual = dia; }
     const marcas = (r.source === 'manual' ? '<span class="marca">digitada</span>' : '') + (r.edited ? '<span class="marca">corrigida</span>' : '');
     html += `<li><button class="item" data-id="${esc(r.id)}"><span class="hora">${fmtHora(r.ts)}</span><span class="pa">${r.sys}/${r.dia}${marcas}${temNota(r) ? ICONE_NOTA : ''}</span><span class="pul">${r.pulse} bpm</span></button></li>`;
   }
   html += '</ul>';
+  if (registros.length > LIMITE_INICIO) html += `<p class="lista-mais">Mostrando as ${LIMITE_INICIO} leituras mais recentes de ${registros.length}. <button class="link" id="btn-ver-todas">Ver todas no painel</button></p>`;
   $('#lista').innerHTML = html;
+  const vt = $('#btn-ver-todas'); if (vt) vt.onclick = () => Painel.abrir();
 }
 function graficoSVG(s) {
-  // gráfico simples: linhas da sistólica e da diastólica com bolinhas numeradas + faixa de referência ao fundo
+  // linhas da sistólica e da diastólica com bolinhas numeradas + faixa de referência ao fundo.
+  // Cada leitura ocupa uma "casa": cabem 7 na tela; as mais antigas ficam à esquerda, rolando.
+  // Tocar numa leitura abre a edição dela.
   const fx = faixaDe(perfilDe(perfilAtual));
-  const W = 320, H = 176, L = 30, R = 12, T = 14, B = 24;
+  const box = $('#grafico');
+  const EX = 32, H = 190, T = 16, B = 38;
+  const disp = Math.max(240, (box.clientWidth || 340) - EX - 4);
+  const casa = disp / Math.min(7, s.length);
+  const W = Math.max(disp, Math.round(casa * s.length));
   let lo = Math.min(fx.dia, ...s.map((r) => r.dia)), hi = Math.max(fx.sys, ...s.map((r) => r.sys));
   lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
-  const X = (i) => L + 8 + (i * (W - L - R - 16)) / (s.length - 1), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
-  const esp = (W - L - R - 16) / Math.max(1, s.length - 1);
-  const r = Math.max(6.5, Math.min(10, esp * 0.46)), fs = r >= 8.5 ? 9 : 7.5;
-  let g = '';
+  const X = (i) => casa * (i + 0.5), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
+  const r = Math.max(8, Math.min(11, casa * 0.26)), fs = r >= 9.5 ? 10 : 9;
+  let g = '', eixo = '';
   const passo = hi - lo > 80 ? 40 : 20;
-  for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E3E7E1"/><text x="${L - 6}" y="${Y(v) + 4}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`;
-  g += `<rect class="faixa-ref" x="${L}" y="${Y(fx.sys).toFixed(1)}" width="${W - L - R}" height="${(Y(fx.dia) - Y(fx.sys)).toFixed(1)}" fill="rgba(240,196,40,0.16)"/>` +
-    `<line x1="${L}" x2="${W - R}" y1="${Y(fx.sys).toFixed(1)}" y2="${Y(fx.sys).toFixed(1)}" stroke="#E2BE3C" stroke-dasharray="5 4"/><line x1="${L}" x2="${W - R}" y1="${Y(fx.dia).toFixed(1)}" y2="${Y(fx.dia).toFixed(1)}" stroke="#E2BE3C" stroke-dasharray="5 4"/>`;
-  const linha = (k, cor, cls) => `<polyline fill="none" stroke="${cor}" stroke-width="2.2" stroke-linejoin="round" points="${s.map((x, i) => `${X(i).toFixed(1)},${Y(x[k]).toFixed(1)}`).join(' ')}"/>` +
-    s.map((x, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(x[k]).toFixed(1)}" r="${r.toFixed(1)}" fill="${cor}" stroke="#fff" stroke-width="1.5"/><text class="${cls}" x="${X(i).toFixed(1)}" y="${(Y(x[k]) + fs * 0.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#fff">${Math.floor(x[k] / 10)}</text>`).join('');
-  const d0 = new Date(s[0].ts), d1 = new Date(s[s.length - 1].ts);
-  g += `<text x="${L + 8}" y="${H - 6}" font-size="10" fill="#6B757D">${d0.getDate()}/${d0.getMonth() + 1}</text><text x="${W - R - 8}" y="${H - 6}" font-size="10" text-anchor="end" fill="#6B757D">${d1.getDate()}/${d1.getMonth() + 1}</text>`;
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico das últimas ${s.length} leituras">${g}${linha('sys', 'var(--sys)', 'mini-sys')}${linha('dia', 'var(--dia)', 'mini-dia')}</svg>`;
+  for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) { g += `<line x1="0" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E3E7E1"/>`; eixo += `<text x="${EX - 5}" y="${Y(v) + 4}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`; }
+  g += `<rect class="faixa-ref" x="0" y="${Y(fx.sys).toFixed(1)}" width="${W}" height="${(Y(fx.dia) - Y(fx.sys)).toFixed(1)}" fill="rgba(240,196,40,0.16)"/>` +
+    `<line x1="0" x2="${W}" y1="${Y(fx.sys).toFixed(1)}" y2="${Y(fx.sys).toFixed(1)}" stroke="#E2BE3C" stroke-dasharray="5 4"/><line x1="0" x2="${W}" y1="${Y(fx.dia).toFixed(1)}" y2="${Y(fx.dia).toFixed(1)}" stroke="#E2BE3C" stroke-dasharray="5 4"/>`;
+  // hora embaixo de cada leitura e a data quando o dia muda
+  let diaAnt = '';
+  s.forEach((x, i) => {
+    const d = new Date(x.ts), k = `${d.getDate()}/${d.getMonth() + 1}`;
+    g += `<text x="${X(i).toFixed(1)}" y="${H - 22}" font-size="9.5" text-anchor="middle" fill="#6B757D">${fmtHora(x.ts)}</text>`;
+    if (k !== diaAnt) { g += `<text x="${X(i).toFixed(1)}" y="${H - 7}" font-size="10" font-weight="700" text-anchor="middle" fill="#3B4650">${k}</text>`; if (i > 0) g += `<line x1="${(X(i) - casa / 2).toFixed(1)}" x2="${(X(i) - casa / 2).toFixed(1)}" y1="${T}" y2="${H - B + 4}" stroke="#E3E7E1" stroke-dasharray="2 3"/>`; }
+    diaAnt = k;
+  });
+  const linha = (k, cor) => `<polyline fill="none" stroke="${cor}" stroke-width="2.2" stroke-linejoin="round" points="${s.map((x, i) => `${X(i).toFixed(1)},${Y(x[k]).toFixed(1)}`).join(' ')}"/>`;
+  g += linha('sys', 'var(--sys)') + linha('dia', 'var(--dia)');
+  s.forEach((x, i) => {
+    const cx = X(i).toFixed(1);
+    g += `<g class="ponto" data-id="${esc(x.id)}" tabindex="0" role="button" aria-label="Editar leitura de ${esc(fmtDia(x.ts))} às ${fmtHora(x.ts)}: ${x.sys} por ${x.dia}, pulso ${x.pulse}">`;
+    g += `<rect class="ponto-alvo" x="${(X(i) - casa / 2).toFixed(1)}" y="0" width="${casa.toFixed(1)}" height="${H - B + 4}" fill="transparent"/>`;
+    for (const [k, cor, cls] of [['sys', 'var(--sys)', 'mini-sys'], ['dia', 'var(--dia)', 'mini-dia']]) {
+      const cy = Y(x[k]);
+      g += `<circle cx="${cx}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="${cor}" stroke="#fff" stroke-width="1.5"/><text class="${cls}" x="${cx}" y="${(cy + fs * 0.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#fff">${Math.floor(x[k] / 10)}</text>`;
+    }
+    g += '</g>';
+  });
+  return `<div class="gi-wrap"><svg class="gi-eixo" viewBox="0 0 ${EX} ${H}" width="${EX}" height="${H}" aria-hidden="true">${eixo}</svg>` +
+    `<div class="gi-rolagem"><svg class="principal" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="group" aria-label="Gráfico das últimas ${s.length} leituras; toque numa leitura para editar">${g}</svg></div></div>`;
+}
+const LIMITE_INICIO = 30;
+function abrirPontoDoGrafico(ev) {
+  const p = ev.target.closest && ev.target.closest('#grafico .ponto'); if (!p) return;
+  const r = registros.find((x) => x.id === p.dataset.id); if (r) Conferir.editar(r);
 }
 
 // ====================== navegação ======================
@@ -1578,6 +1610,10 @@ document.addEventListener('input', (ev) => limparCampo(ev.target));
 
 // ====================== ligações ======================
 $('#btn-add').onclick = abrirAdicionar;
+$('#grafico').addEventListener('click', abrirPontoDoGrafico);
+$('#grafico').addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abrirPontoDoGrafico(ev); } });
+let rzInicio = 0;
+window.addEventListener('resize', () => { if (telaAtual !== 'inicio') return; cancelAnimationFrame(rzInicio); rzInicio = requestAnimationFrame(() => renderInicio()); });
 $('#btn-perfil').onclick = () => Perfil.abrirFolha();
 $('#btn-painel').onclick = () => Painel.abrir();
 $('#btn-painel-voltar').onclick = () => voltarInicio();

@@ -77,6 +77,16 @@ button { cursor: pointer; }
 .bloco h2 { font-size: 1.05rem; margin: 0 0 8px; font-weight: 650; }
 .grafico { background: var(--branco); border-radius: var(--raio); padding: 10px 8px 6px; border: 1px solid var(--linha); }
 .grafico svg { width: 100%; height: auto; display: block; }
+.gi-wrap { display: flex; }
+.gi-eixo { flex: 0 0 auto; display: block; }
+.gi-rolagem { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.gi-rolagem::-webkit-scrollbar { height: 6px; }
+.gi-rolagem::-webkit-scrollbar-thumb { background: #C9D0C8; border-radius: 3px; }
+.grafico .gi-wrap svg { display: block; width: auto; height: auto; max-width: none; }
+#grafico .ponto { cursor: pointer; outline: none; }
+#grafico .ponto:hover .ponto-alvo, #grafico .ponto:focus-visible .ponto-alvo { fill: rgba(46, 50, 114, 0.06); }
+.lista-mais { text-align: center; color: var(--tinta-2); font-size: 0.9rem; margin: 14px 0 0; }
+.link { border: 0; background: transparent; color: var(--start); font-weight: 700; text-decoration: underline; padding: 4px; }
 .legenda { display: flex; gap: 16px; font-size: 0.85rem; color: var(--tinta-2); padding: 4px 8px 2px; }
 .legenda i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 .legenda i.leg-faixa { width: 14px; height: 10px; border-radius: 2px; background: rgba(240,196,40,0.35); border: 1px dashed #D9B22E; vertical-align: -1px; }
