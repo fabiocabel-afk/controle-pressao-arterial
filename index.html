@@ -371,6 +371,30 @@ button { cursor: pointer; }
 .menu-principal .mi { width: 24px; height: 24px; color: var(--start); }
 .menu-principal button.perigo .mi { color: var(--alerta); }
 
+
+/* ---------- card de leitura (antes de editar) ---------- */
+.det-card { width: min(420px, calc(100vw - 32px)); max-height: 86vh; overflow-y: auto; }
+.det-topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.det-topo h3 { margin: 0; }
+.det-topo small { color: var(--tinta-2); }
+.det-topo .icone { margin: -8px -8px 0 0; }
+.det-valores { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 10px; padding: 12px 8px; border-radius: 14px; background: var(--vidro); box-shadow: inset 0 2px 6px rgba(0,0,0,0.10); text-align: center; }
+.det-valores span { display: block; font-size: 0.78rem; font-weight: 700; color: #3D4A3F; }
+.det-valores b { display: block; font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--segmento); }
+.det-valores small { color: #3D4A3F; font-size: 0.78rem; }
+.det-faixa { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.9rem; margin: 0 0 8px; }
+.det-faixa i { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.det-faixa.dentro { color: var(--start); } .det-faixa.dentro i { background: var(--start); }
+.det-faixa.fora { color: #C25E14; } .det-faixa.fora i { background: #E07A2C; }
+.det-info { margin: 0; }
+.det-info div { display: grid; grid-template-columns: 90px 1fr; gap: 8px; padding: 6px 0; border-top: 1px solid var(--linha); font-size: 0.92rem; }
+.det-info dt { color: var(--tinta-2); } .det-info dd { margin: 0; }
+.det-nota { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: #FFF9EA; border: 1px solid #F0DFA8; font-size: 0.92rem; }
+.det-nota b { display: block; margin-bottom: 4px; }
+.det-nota span { font-weight: 700; }
+.det-nota div + div { margin-top: 3px; }
+.det-sem-nota { color: var(--tinta-2); font-size: 0.9rem; margin: 8px 0 0; }
+
 @media (prefers-reduced-motion: no-preference) {
   .toast { animation: sobe 180ms ease-out; }
   @keyframes sobe { from { transform: translate(-50%, 8px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }

@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 const DEVICE_ID = 'omron-hem7122';
 const APP_URL = 'https://fabiocabel-afk.github.io/controle-pressao-arterial/';
 
@@ -288,7 +288,7 @@ function graficoSVG(s) {
 const LIMITE_INICIO = 30;
 function abrirPontoDoGrafico(ev) {
   const p = ev.target.closest && ev.target.closest('#grafico .ponto'); if (!p) return;
-  const r = registros.find((x) => x.id === p.dataset.id); if (r) Conferir.editar(r);
+  const r = registros.find((x) => x.id === p.dataset.id); if (r) verLeitura(r);
 }
 
 // ====================== navegação ======================
@@ -1608,6 +1608,44 @@ function abrirAdicionar() {
 function limparCampo(el) { const c = el.closest('.campo.erro'); if (c) { c.classList.remove('erro'); const m = c.querySelector('.msg-erro'); if (m) m.hidden = true; } }
 document.addEventListener('input', (ev) => limparCampo(ev.target));
 
+// ====================== ver leitura (card só de leitura, antes de editar) ======================
+function verLeitura(r) {
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
+  const p = perfilDe(r.profileId), fx = faixaDe(p), fora = foraDaFaixa(r, fx);
+  const d = new Date(r.ts);
+  const origem = r.source === 'manual' ? 'Digitada' : r.source === 'foto' ? 'Lida de uma foto' : 'Lida pela câmera';
+  const lidoDif = r.read && (r.read.sys !== r.sys || r.read.dia !== r.dia || r.read.pulse !== r.pulse);
+  const notas = notaLinhas(r.nota);
+  const f = document.createElement('div'); f.className = 'fundo';
+  f.innerHTML = `<div class="dialogo det-card" role="dialog" aria-modal="true" aria-labelledby="det-t">
+    <div class="det-topo"><div><h3 id="det-t">${esc(fmtDia(r.ts))}, ${fmtHora(r.ts)}</h3><small>${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}${p && perfis.length > 1 ? ' · ' + esc(p.nome) : ''}</small></div>
+      <button class="icone" data-v="fechar-x" aria-label="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="det-valores">
+      <div><span>Sistólica</span><b class="det-sys">${r.sys}</b><small>mmHg</small></div>
+      <div><span>Diastólica</span><b class="det-dia">${r.dia}</b><small>mmHg</small></div>
+      <div><span>Pulso</span><b class="det-pul">${r.pulse}</b><small>bpm</small></div>
+    </div>
+    <p class="det-faixa ${fora ? 'fora' : 'dentro'}"><i aria-hidden="true"></i>${fora ? 'Fora da faixa' : 'Dentro da faixa'} · ${esc(faixaTexto(fx))}</p>
+    <dl class="det-info">
+      <div><dt>Origem</dt><dd>${origem}${r.source !== 'manual' && r.confident === false ? ' (com reflexo)' : ''}</dd></div>
+      ${lidoDif ? `<div><dt>Corrigida</dt><dd>o aparelho mostrou ${r.read.sys}/${r.read.dia}, pulso ${r.read.pulse}</dd></div>` : ''}
+    </dl>
+    ${notas.length ? `<div class="det-nota"><b>Nota</b>${notas.map((l) => `<div><span>${esc(l.nome)}:</span> ${esc(l.texto)}</div>`).join('')}</div>` : '<p class="det-sem-nota">Sem nota.</p>'}
+    <div class="botoes"><button class="btn btn-sec" data-v="fechar">Fechar</button><button class="btn btn-start" id="det-editar" data-v="editar">Editar</button></div>
+  </div>`;
+  const fechar = () => { f.remove(); document.removeEventListener('keydown', tecla); };
+  const tecla = (ev) => { if (ev.key === 'Escape') fechar(); };
+  f.onclick = (ev) => {
+    if (ev.target === f) { fechar(); return; }
+    const b = ev.target.closest('[data-v]'); if (!b) return;
+    fechar();
+    if (b.dataset.v === 'editar') Conferir.editar(r);
+  };
+  document.addEventListener('keydown', tecla);
+  $('#camada').appendChild(f);
+  f.querySelector('[data-v="fechar"]').focus();
+}
+
 // ====================== ligações ======================
 $('#btn-add').onclick = abrirAdicionar;
 $('#grafico').addEventListener('click', abrirPontoDoGrafico);
@@ -1625,7 +1663,7 @@ $('#btn-salvar').onclick = () => Conferir.salvar();
 $('#btn-excluir').onclick = () => Conferir.excluir();
 $('#btn-reler').onclick = () => Conferir.reler();
 $('#btn-menu').onclick = abrirMenu;
-$('#lista').onclick = (ev) => { const b = ev.target.closest('.item'); if (!b) return; const r = registros.find((x) => x.id === b.dataset.id); if (r) Conferir.editar(r); };
+$('#lista').onclick = (ev) => { const b = ev.target.closest('.item'); if (!b) return; const r = registros.find((x) => x.id === b.dataset.id); if (r) verLeitura(r); };
 $('#in-foto').onchange = (ev) => lerFoto(ev.target.files[0]);
 $('#in-backup').onchange = (ev) => importar(ev.target.files[0]);
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && telaAtual === 'conferir' && ev.target.tagName === 'INPUT') Conferir.salvar(); });
