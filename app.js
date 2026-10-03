@@ -1,6 +1,6 @@
 'use strict';
 // Pressão — registro de pressão arterial com leitura do visor pela câmera
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const DEVICE_ID = 'omron-hem7122';
 const APP_URL = 'https://fabiocabel-afk.github.io/controle-pressao-arterial/';
 
@@ -256,7 +256,7 @@ function graficoSVG(s) {
   let lo = Math.min(fx.dia, ...s.map((r) => r.dia)), hi = Math.max(fx.sys, ...s.map((r) => r.sys));
   lo = Math.floor((lo - 12) / 10) * 10; hi = Math.ceil((hi + 12) / 10) * 10;
   const X = (i) => casa * (i + 0.5), Y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
-  const r = Math.max(8, Math.min(11, casa * 0.26)), fs = r >= 9.5 ? 10 : 9;
+  const r = Math.max(11, Math.min(13, casa * 0.28)), fs = r >= 12 ? 10 : 9.5;
   let g = '', eixo = '';
   const passo = hi - lo > 80 ? 40 : 20;
   for (let v = Math.ceil(lo / passo) * passo; v <= hi; v += passo) { g += `<line x1="0" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E3E7E1"/>`; eixo += `<text x="${EX - 5}" y="${Y(v) + 4}" font-size="10" text-anchor="end" fill="#6B757D">${v}</text>`; }
@@ -278,7 +278,7 @@ function graficoSVG(s) {
     g += `<rect class="ponto-alvo" x="${(X(i) - casa / 2).toFixed(1)}" y="0" width="${casa.toFixed(1)}" height="${H - B + 4}" fill="transparent"/>`;
     for (const [k, cor, cls] of [['sys', 'var(--sys)', 'mini-sys'], ['dia', 'var(--dia)', 'mini-dia']]) {
       const cy = Y(x[k]);
-      g += `<circle cx="${cx}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="${cor}" stroke="#fff" stroke-width="1.5"/><text class="${cls}" x="${cx}" y="${(cy + fs * 0.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#fff">${Math.floor(x[k] / 10)}</text>`;
+      g += `<circle cx="${cx}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="${cor}" stroke="#fff" stroke-width="1.5"/><text class="${cls}" x="${cx}" y="${(cy + fs * 0.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#fff">${x[k]}</text>`;
     }
     g += '</g>';
   });
@@ -1215,7 +1215,6 @@ const Painel = (() => {
     }
     return cs;
   }
-  const abrev = (v) => String(Math.floor(v / 10)); // 145 -> 14, 94 -> 9 (como se fala: "14 por 9")
   // caminho estilo monitor cardíaco: linha entre os pontos com um "batimento" logo depois de cada leitura
   function tracadoECG(pts, raio) {
     if (!pts.length) return '';
@@ -1278,7 +1277,7 @@ const Painel = (() => {
     }
     const menorCasa = Math.min(...comItem.map((c) => c.w));
     const bw = Math.max(16, Math.min(26, menorCasa * 0.5));
-    const raio = Math.max(12, bw / 2 + 2);
+    const raio = Math.max(13.5, bw / 2 + 3);
     // escala própria do pulso
     const pulsos = comItem.map((c) => c.it.pulse);
     let plo = Math.floor((Math.min(...pulsos) - 12) / 10) * 10, phi = Math.ceil((Math.max(...pulsos) + 12) / 10) * 10;
@@ -1298,8 +1297,14 @@ const Painel = (() => {
       for (const c of comItem) {
         const it = c.it, x = c.x, ys = Y(it.sys), yd = Y(it.dia), sel = it.id === st.sel, fora = foraDaFaixa(it, fx);
         g += `<rect class="barra-pa${fora ? ' fora' : ''}" x="${(x - bw / 2).toFixed(1)}" y="${ys.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(2, yd - ys).toFixed(1)}" rx="${(bw / 2).toFixed(1)}" fill="${fora ? 'rgba(232,126,40,0.62)' : 'rgba(46,50,114,0.20)'}"${sel ? ' stroke="var(--tinta)" stroke-width="2.5"' : ''}/>`;
-        g += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="${raio}" fill="var(--sys)" stroke="#fff" stroke-width="2"/><text class="num-sys" x="${x.toFixed(1)}" y="${(ys + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.sys)}</text>`;
-        g += `<circle cx="${x.toFixed(1)}" cy="${yd.toFixed(1)}" r="${raio}" fill="var(--dia)" stroke="#fff" stroke-width="2"/><text class="num-dia" x="${x.toFixed(1)}" y="${(yd + 4).toFixed(1)}" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">${abrev(it.dia)}</text>`;
+        // diferença entre sistólica e diastólica (pressão de pulso), no meio da barra;
+        // se as bolinhas estiverem perto demais, vai ao lado da barra
+        const dif = it.sys - it.dia, livre = (yd - raio) - (ys + raio);
+        const fsN = (v) => (v >= 100 ? 10.5 : 11.5);
+        if (livre >= 15) g += `<text class="num-pp" x="${x.toFixed(1)}" y="${((ys + yd) / 2 + 4).toFixed(1)}" font-size="10.5" font-weight="800" text-anchor="middle" fill="${fora ? '#7A3608' : '#2E3272'}" stroke="#fff" stroke-width="3" paint-order="stroke">${dif}</text>`;
+        else g += `<text class="num-pp lado" x="${(x + raio + 3).toFixed(1)}" y="${((ys + yd) / 2 + 4).toFixed(1)}" font-size="10" font-weight="800" text-anchor="start" fill="${fora ? '#7A3608' : '#2E3272'}" stroke="#fff" stroke-width="3" paint-order="stroke">${dif}</text>`;
+        g += `<circle cx="${x.toFixed(1)}" cy="${ys.toFixed(1)}" r="${raio}" fill="var(--sys)" stroke="#fff" stroke-width="2"/><text class="num-sys" x="${x.toFixed(1)}" y="${(ys + 4).toFixed(1)}" font-size="${fsN(it.sys)}" font-weight="700" text-anchor="middle" fill="#fff">${it.sys}</text>`;
+        g += `<circle cx="${x.toFixed(1)}" cy="${yd.toFixed(1)}" r="${raio}" fill="var(--dia)" stroke="#fff" stroke-width="2"/><text class="num-dia" x="${x.toFixed(1)}" y="${(yd + 4).toFixed(1)}" font-size="${fsN(it.dia)}" font-weight="700" text-anchor="middle" fill="#fff">${it.dia}</text>`;
       }
       if (comPulso) {
         const pp = passoPulso(phi - plo);
